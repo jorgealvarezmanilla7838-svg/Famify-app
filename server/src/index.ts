@@ -6,6 +6,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import { pool } from './db';
+import gastosRouter from './modulos/gastos/gastos.routes';
+import configuracionRouter from './modulos/configuracion/configuracion.routes';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -84,7 +86,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     const newUser = await pool.query(
       `INSERT INTO usuarios (nombre, email, password_hash, aviso_privacidad_aceptado_en) 
        VALUES ($1, $2, $3, NOW()) 
-       RETURNING id, nombre, email, rol_id, familia_id`,
+       RETURNING id, nombre, email, rol_id, familia_id, perfil_completo`,
       [nombre, email, passwordHash]
     );
 
@@ -144,6 +146,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
         email: user.email,
         rol_id: user.rol_id,
         familia_id: user.familia_id,
+        perfil_completo: user.perfil_completo,
       },
     });
   } catch (err: any) {
@@ -167,10 +170,10 @@ app.post('/api/auth/crear-familia', verificarToken, async (req: AuthRequest, res
     ]);
     const familiaId = resultFam.rows[0].familia_id;
 
-    const resultInv = await pool.query(
-      'SELECT fn_crear_invitacion($1, 2) AS codigo_invitacion',
-      [usuario_id]
-    );
+const resultInv = await pool.query(
+  'SELECT fn_crear_invitacion($1, $2, $3) AS codigo_invitacion',
+  [usuario_id, 2, null]
+);
     const codigoInvitacion = resultInv.rows[0].codigo_invitacion;
 
     return res.json({
@@ -323,6 +326,12 @@ app.get('/api/auth/estado-familia/:familia_id', verificarToken, async (req: Auth
     return res.status(500).json({ error: `Error en Postgres: ${err.message}` });
   }
 });
+
+// Módulo 2: Configuración de usuario (RF05 a RF08), cuestionario para completar el registro
+app.use('/api/configuracion', verificarToken, configuracionRouter);
+
+// Módulo 2: Gestión de Gastos y Egresos (RF13 a RF18)
+app.use('/api/gastos', verificarToken, gastosRouter);
 
 app.listen(PORT, () => {
   console.log(`=================================`);

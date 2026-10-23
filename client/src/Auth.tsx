@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './Auth.css';
+import { Cuestionario } from './Cuestionario';
 
 export const Auth: React.FC = () => {
   const [modo, setModo] = useState<'login' | 'register'>('login');
@@ -193,7 +194,7 @@ export const Auth: React.FC = () => {
   };
 
   return (
-    <div className="auth-container">
+    <div className={`auth-container${usuario?.familia_id && usuario.perfil_completo === false ? ' auth-container--ancho' : ''}`}>
       <div className="auth-header">
         <h2>Famify</h2>
         {/* RF01 - Módulo 1: Gestión de Usuarios (Oculto en interfaz) */}
@@ -310,6 +311,15 @@ export const Auth: React.FC = () => {
                 </button>
               </form>
             </div>
+          ) : usuario.perfil_completo === false ? (
+            // RF05 a RF08: cuestionario para completar el registro (administrador e integrantes)
+            <Cuestionario
+              nombre={usuario.nombre || ''}
+              onCompletado={(datos) => {
+                setUsuario({ ...usuario, perfil_completo: true, recibe_sueldo: datos.recibe_sueldo });
+                setMensaje({ texto: '¡Listo! Tu perfil quedó completo.', tipo: 'success' });
+              }}
+            />
           ) : (
             <div>
               {/* Botón de Estado de la Familia */}
