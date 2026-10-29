@@ -18,8 +18,8 @@ export const cargarContexto = async (req: PeticionGastos, res: Response, next: N
   try {
     const r = await pool.query(
       `SELECT u.id, u.familia_id, ro.nombre AS rol
-         FROM usuarios u
-         LEFT JOIN roles ro ON ro.id = u.rol_id
+         FROM usuario u
+         LEFT JOIN rolfamiliar ro ON ro.id = u.rol_id
         WHERE u.id = $1::bigint AND u.activo = true`,
       [req.user.id]
     );

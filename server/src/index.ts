@@ -75,7 +75,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
   }
 
   try {
-    const userCheck = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    const userCheck = await pool.query('SELECT * FROM usuario WHERE lower(email) = lower($1)', [email]);
     if (userCheck.rows.length > 0) {
       return res.status(400).json({ error: 'El correo electrónico ya está registrado.' });
     }
@@ -84,7 +84,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(password, salt);
 
     const newUser = await pool.query(
-      `INSERT INTO usuarios (nombre, email, password_hash, aviso_privacidad_aceptado_en) 
+      `INSERT INTO usuario (nombre, email, contrasena, aviso_privacidad_aceptado_en) 
        VALUES ($1, $2, $3, NOW()) 
        RETURNING id, nombre, email, rol_id, familia_id, perfil_completo`,
       [nombre, email, passwordHash]
@@ -105,6 +105,12 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('❌ Error en /register:', err);
+    if (err.code === '23514') {
+      return res.status(400).json({ error: 'El correo electrónico no tiene un formato válido.' });
+    }
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'El correo electrónico ya está registrado.' });
+    }
     return res.status(500).json({ error: `Error en Postgres: ${err.message}` });
   }
 });
@@ -118,13 +124,16 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM usuario WHERE lower(email) = lower($1)', [email]);
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'Credenciales inválidas.' });
     }
 
     const user = result.rows[0];
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!user.activo) {
+      return res.status(400).json({ error: 'Credenciales inválidas.' });
+    }
+    const isMatch = await bcrypt.compare(password, user.contrasena);
     if (!isMatch) {
       return res.status(400).json({ error: 'Credenciales inválidas.' });
     }
@@ -171,7 +180,7 @@ app.post('/api/auth/crear-familia', verificarToken, async (req: AuthRequest, res
     const familiaId = resultFam.rows[0].familia_id;
 
 const resultInv = await pool.query(
-  'SELECT fn_crear_invitacion($1, $2, $3) AS codigo_invitacion',
+  'SELECT fn_crear_invitacion($1::bigint, $2::smallint, $3::text) AS codigo_invitacion',
   [usuario_id, 2, null]
 );
     const codigoInvitacion = resultInv.rows[0].codigo_invitacion;
@@ -201,7 +210,7 @@ app.post('/api/auth/generar-invitacion', verificarToken, async (req: AuthRequest
 
   try {
     // RNF03: Validación estricta del Rol de Administrador
-    const userResult = await pool.query('SELECT rol_id FROM usuarios WHERE id = $1', [usuario_id]);
+    const userResult = await pool.query('SELECT rol_id FROM usuario WHERE id = $1', [usuario_id]);
     if (userResult.rows.length === 0 || Number(userResult.rows[0].rol_id) !== 1) {
       return res.status(403).json({
         error: 'Acceso denegado: Solo el Administrador de la familia puede generar invitaciones.',
@@ -209,7 +218,7 @@ app.post('/api/auth/generar-invitacion', verificarToken, async (req: AuthRequest
     }
 
     const result = await pool.query(
-      'SELECT fn_crear_invitacion($1, $2, $3) AS codigo_invitacion',
+      'SELECT fn_crear_invitacion($1::bigint, $2::smallint, $3::text) AS codigo_invitacion',
       [usuario_id, rol_id, email_invitado || null]
     );
 
@@ -272,7 +281,7 @@ app.post('/api/auth/unirse-familia', verificarToken, async (req: AuthRequest, re
     ]);
 
     const familiaId = result.rows[0].familia_id;
-    const famQuery = await pool.query('SELECT nombre FROM familias WHERE id = $1', [familiaId]);
+    const famQuery = await pool.query('SELECT nombre FROM familia WHERE id = $1', [familiaId]);
 
     return res.json({
       success: true,
@@ -298,18 +307,21 @@ app.get('/api/auth/estado-familia/:familia_id', verificarToken, async (req: Auth
   }
 
   try {
+    // 1. Consulta en la tabla "familia" usando "fecha_de_creacion"
     const famQuery = await pool.query(
-      'SELECT id, nombre, created_at FROM familias WHERE id = $1',
+      'SELECT id, nombre, fecha_de_creacion AS created_at FROM familia WHERE id = $1',
       [familia_id]
     );
+
     if (famQuery.rows.length === 0) {
       return res.status(404).json({ error: 'Familia no encontrada.' });
     }
 
+    // 2. Consulta en "usuario" y "rolfamiliar"
     const miembrosQuery = await pool.query(
       `SELECT u.id, u.nombre, u.email, r.nombre AS rol, u.created_at
-       FROM usuarios u
-       JOIN roles r ON r.id = u.rol_id
+       FROM usuario u
+       JOIN rolfamiliar r ON r.id = u.rol_id
        WHERE u.familia_id = $1 AND u.activo = true
        ORDER BY u.rol_id ASC, u.nombre ASC`,
       [familia_id]

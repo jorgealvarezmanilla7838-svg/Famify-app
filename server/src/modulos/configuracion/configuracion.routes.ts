@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { pool } from '../../db';
 import { PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
 import { validarConfiguracion } from './configuracion.validaciones';
+import { METODOS_PAGO, metodoPorCodigo } from '../../catalogos';
 
 const router = Router();
 
@@ -19,7 +20,7 @@ const responderError = (res: Response, err: any, accion: string) => {
     return res.status(400).json({ error: err.message });
   }
   if (err.code === '23505') {
-    return res.status(400).json({ error: 'Hay datos repetidos en tu configuración (revisa los nombres de tus tarjetas).' });
+    return res.status(400).json({ error: 'Hay datos repetidos en tu configuración (ya existe una configuración guardada para tu usuario).' });
   }
   if (err.code === '23514' || err.code === '23503') {
     return res.status(400).json({ error: 'Los datos no cumplen las reglas del sistema.' });
@@ -31,48 +32,71 @@ const responderError = (res: Response, err: any, accion: string) => {
 router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   const { familiaId } = req.contexto!;
   try {
-    const [metodos, categorias] = await Promise.all([
-      pool.query('SELECT id, nombre, es_credito FROM metodos_pago ORDER BY id'),
-      pool.query(
-        `SELECT id, nombre FROM categorias
-          WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
-          ORDER BY nombre`,
-        [familiaId]
-      ),
-    ]);
-    return res.json({ success: true, metodos_pago: metodos.rows, categorias: categorias.rows });
+    const categorias = await pool.query(
+      `SELECT id, nombre FROM categoria_de_los_gastos
+        WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
+        ORDER BY nombre`,
+      [familiaId]
+    );
+    const metodos = METODOS_PAGO.map(({ id, nombre, es_credito }) => ({ id, nombre, es_credito }));
+    return res.json({ success: true, metodos_pago: metodos, categorias: categorias.rows });
   } catch (err: any) {
     return responderError(res, err, 'consultar catálogos de configuración');
   }
 });
 
 // Configuración que ya tiene guardada el usuario (RF05 a RF08)
+// Ahora todo vive en usuario + configuracion_financiera (una fila por usuario);
+// aquí se arma la misma respuesta de antes para que el cliente no cambie.
 router.get('/', async (req: PeticionGastos, res: Response) => {
-  const { usuarioId, familiaId } = req.contexto!;
+  const { usuarioId } = req.contexto!;
   try {
-    const [usuario, metodos, gastos] = await Promise.all([
-      pool.query(
-        `SELECT recibe_sueldo, ingreso_principal, tiene_ingresos_secundarios, dias_ingreso, perfil_completo
-           FROM usuarios WHERE id = $1::bigint`,
-        [usuarioId]
-      ),
-      pool.query(
-        `SELECT id, metodo_pago_id, alias, dia_corte, dia_limite_pago
-           FROM usuario_metodos_pago WHERE usuario_id = $1::bigint AND activo ORDER BY id`,
-        [usuarioId]
-      ),
-      pool.query(
-        `SELECT id, categoria_id, descripcion, monto, dia_pago, dias_aviso
-           FROM gastos_fijos
-          WHERE usuario_id = $1::bigint AND familia_id = $2::bigint AND activo ORDER BY id`,
-        [usuarioId, familiaId]
-      ),
-    ]);
+    const r = await pool.query(
+      `SELECT u.recibe_sueldo, u.perfil_completo,
+              c.ingreso_principal,
+              (c.ingresos_secundarios IS NOT NULL) AS tiene_ingresos_secundarios,
+              c.dias_de_ingreso AS dias_ingreso,
+              c.metodos_de_pago, c.dia_de_corte,
+              EXTRACT(day FROM c.fecha_limite_de_pago)::int AS dia_limite_pago,
+              c.gastos_fijos
+         FROM usuario u
+         LEFT JOIN configuracion_financiera c ON c.usuario_id = u.id
+        WHERE u.id = $1::bigint`,
+      [usuarioId]
+    );
+    const f = r.rows[0] ?? {};
+
+    const metodos = ((f.metodos_de_pago as string[] | null) ?? []).map((codigo) => {
+      const m = metodoPorCodigo(codigo);
+      return {
+        id: m?.id ?? null,
+        metodo_pago_id: m?.id ?? null,
+        alias: 'Principal',
+        dia_corte: m?.es_credito ? f.dia_de_corte : null,
+        dia_limite_pago: m?.es_credito ? f.dia_limite_pago : null,
+      };
+    });
+
+    const gastos = ((f.gastos_fijos as any[] | null) ?? []).map((g, i) => ({
+      id: i + 1,
+      categoria_id: g.categoria_id ?? null,
+      descripcion: g.descripcion,
+      monto: g.monto,
+      dia_pago: g.dia_pago,
+      dias_aviso: g.dias_aviso,
+    }));
+
     return res.json({
       success: true,
-      configuracion: usuario.rows[0],
-      metodos_pago: metodos.rows,
-      gastos_fijos: gastos.rows,
+      configuracion: {
+        recibe_sueldo: f.recibe_sueldo,
+        ingreso_principal: f.ingreso_principal ?? null,
+        tiene_ingresos_secundarios: f.tiene_ingresos_secundarios ?? false,
+        dias_ingreso: f.dias_ingreso ?? null,
+        perfil_completo: f.perfil_completo,
+      },
+      metodos_pago: metodos,
+      gastos_fijos: gastos,
     });
   } catch (err: any) {
     return responderError(res, err, 'consultar la configuración');
@@ -86,16 +110,13 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
 
   let catalogos;
   try {
-    const [metodos, categorias] = await Promise.all([
-      pool.query('SELECT id, es_credito FROM metodos_pago'),
-      pool.query(
-        `SELECT id FROM categorias
-          WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)`,
-        [familiaId]
-      ),
-    ]);
+    const categorias = await pool.query(
+      `SELECT id FROM categoria_de_los_gastos
+        WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)`,
+      [familiaId]
+    );
     catalogos = {
-      metodos: new Map<number, boolean>(metodos.rows.map((m: any) => [Number(m.id), m.es_credito === true])),
+      metodos: new Map<number, boolean>(METODOS_PAGO.map((m) => [m.id, m.es_credito])),
       categorias: new Set<number>(categorias.rows.map((c: any) => Number(c.id))),
     };
   } catch (err: any) {
@@ -113,47 +134,43 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
     await cliente.query('BEGIN');
 
     const actual = await cliente.query(
-      'SELECT perfil_completo FROM usuarios WHERE id = $1::bigint AND activo FOR UPDATE',
+      'SELECT perfil_completo FROM usuario WHERE id = $1::bigint AND activo FOR UPDATE',
       [usuarioId]
     );
     if (actual.rows[0]?.perfil_completo === true) {
       yaCompleto = true;
       await cliente.query('ROLLBACK');
     } else {
+      // RF05_ si recibe sueldo o no (de esto dependen los permisos de ingresos)
       await cliente.query(
-        `UPDATE usuarios
-            SET recibe_sueldo = $2::boolean,
-                ingreso_principal = $3::numeric,
-                tiene_ingresos_secundarios = $4::boolean,
-                dias_ingreso = $5::smallint[],
-                perfil_completo = true
-          WHERE id = $1::bigint`,
-        [
-          usuarioId,
-          datos.recibe_sueldo,
-          datos.ingreso_principal,
-          datos.tiene_ingresos_secundarios,
-          datos.dias_ingreso,
-        ]
+        `UPDATE usuario SET recibe_sueldo = $2::boolean, perfil_completo = true WHERE id = $1::bigint`,
+        [usuarioId, datos.recibe_sueldo]
       );
 
-      // RF06_ y RF07_ (RNF07_ solo se guarda alias y días, nunca el número de tarjeta)
-      for (const m of datos.metodos) {
-        await cliente.query(
-          `INSERT INTO usuario_metodos_pago (usuario_id, metodo_pago_id, alias, dia_corte, dia_limite_pago)
-           VALUES ($1::bigint, $2::smallint, $3, $4::smallint, $5::smallint)`,
-          [usuarioId, m.metodo_pago_id, m.alias, m.dia_corte, m.dia_limite_pago]
-        );
-      }
-
-      // RF08_
-      for (const g of datos.gastosFijos) {
-        await cliente.query(
-          `INSERT INTO gastos_fijos (familia_id, usuario_id, categoria_id, descripcion, monto, dia_pago, dias_aviso)
-           VALUES ($1::bigint, $2::bigint, $3::bigint, $4, $5::numeric, $6::smallint, $7::smallint)`,
-          [familiaId, usuarioId, g.categoria_id, g.descripcion, g.monto, g.dia_pago, g.dias_aviso]
-        );
-      }
+      // RF05 a RF08_ una sola fila por usuario en configuracion_financiera
+      // RNF07_ no hay columnas para número de tarjeta ni CVV: solo métodos, corte y límite
+      // el límite de pago se guarda como fecha (la próxima ocurrencia de ese día del mes)
+      const credito = datos.metodos.find((m) => m.dia_corte !== null);
+      await cliente.query(
+        `INSERT INTO configuracion_financiera
+                (usuario_id, ingreso_principal, ingresos_secundarios, dias_de_ingreso,
+                 metodos_de_pago, dia_de_corte, fecha_limite_de_pago, gastos_fijos)
+         VALUES ($1::bigint, $2::numeric, $3::text, $4::smallint[],
+                 $5::text[], $6::smallint,
+                 CASE WHEN $7::int IS NULL THEN NULL ELSE fn_proxima_fecha($7::int) END,
+                 $8::jsonb)`,
+        [
+          usuarioId,
+          datos.ingreso_principal,
+          datos.tiene_ingresos_secundarios ? 'Sí' : null,
+          datos.dias_ingreso,
+          datos.metodos.map((m) => m.codigo),
+          credito?.dia_corte ?? null,
+          credito?.dia_limite_pago ?? null,
+          // RF08_ gastos fijos: [{descripcion, categoria_id, monto, dia_pago, dias_aviso}]
+          JSON.stringify(datos.gastosFijos),
+        ]
+      );
 
       await cliente.query('COMMIT');
     }

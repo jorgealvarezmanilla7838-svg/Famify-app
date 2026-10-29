@@ -1,6 +1,7 @@
 // Validaciones del cuestionario de configuración de usuario (RF05 a RF08)
 // RNF08_ se valida todo lo que llega del cliente antes de tocar la base de datos
 // RNF21_ los mensajes dicen qué campo falló y cómo corregirlo
+import { metodoPorId } from '../../catalogos';
 
 const esEntero = (valor: any) => /^\d+$/.test(String(valor ?? ''));
 const esDia = (valor: any) => esEntero(valor) && Number(valor) >= 1 && Number(valor) <= 31;
@@ -15,7 +16,7 @@ export interface CatalogosValidacion {
 
 export interface MetodoPagoUsuario {
   metodo_pago_id: number;
-  alias: string;
+  codigo: string; // valor que se guarda en configuracion_financiera.metodos_de_pago
   dia_corte: number | null;
   dia_limite_pago: number | null;
 }
@@ -68,37 +69,37 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
   }
 
   // RF06_ y RF07_ métodos de pago (la tarjeta de crédito lleva día de corte y día límite)
+  // En la base de datos cada usuario guarda UN solo corte y UN solo límite de pago
+  // (configuracion_financiera.dia_de_corte / fecha_limite_de_pago), por eso solo se
+  // acepta una tarjeta de crédito y cada método de pago una sola vez.
   const metodos: MetodoPagoUsuario[] = [];
   if (!Array.isArray(body?.metodos_pago) || body.metodos_pago.length === 0) {
     errores.push('Selecciona al menos un método de pago.');
   } else if (body.metodos_pago.length > 20) {
-    errores.push('Registraste demasiados métodos de pago (máximo 20).');
+    errores.push('Registraste demasiados métodos de pago.');
   } else {
-    const vistos = new Set<string>();
+    const vistos = new Set<number>();
     body.metodos_pago.forEach((m: any, i: number) => {
       const etiqueta = `Método de pago ${i + 1}:`;
       const id = Number(m?.metodo_pago_id);
-      if (!esEntero(m?.metodo_pago_id) || !catalogos.metodos.has(id)) {
+      const metodo = metodoPorId(id);
+      if (!esEntero(m?.metodo_pago_id) || !metodo || !catalogos.metodos.has(id)) {
         errores.push(`${etiqueta} selecciona un método de pago válido.`);
         return;
       }
-      const esCredito = catalogos.metodos.get(id) === true;
-
-      const alias = String(m?.alias ?? '').trim() || 'Principal';
-      if (alias.length > 50) {
-        errores.push(`${etiqueta} el nombre no puede pasar de 50 caracteres.`);
+      if (vistos.has(id)) {
+        errores.push(
+          metodo.es_credito
+            ? `${etiqueta} solo puedes registrar una tarjeta de crédito.`
+            : `${etiqueta} el método "${metodo.nombre}" está repetido.`
+        );
         return;
       }
-      const clave = `${id}:${alias.toLowerCase()}`;
-      if (vistos.has(clave)) {
-        errores.push(`${etiqueta} ya registraste otro "${alias}" con el mismo método; usa un nombre distinto.`);
-        return;
-      }
-      vistos.add(clave);
+      vistos.add(id);
 
       let diaCorte: number | null = null;
       let diaLimite: number | null = null;
-      if (esCredito) {
+      if (catalogos.metodos.get(id) === true) {
         if (!esDia(m?.dia_corte)) {
           errores.push(`${etiqueta} el día de corte debe ser un número del 1 al 31.`);
         } else {
@@ -110,7 +111,7 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
           diaLimite = Number(m.dia_limite_pago);
         }
       }
-      metodos.push({ metodo_pago_id: id, alias, dia_corte: diaCorte, dia_limite_pago: diaLimite });
+      metodos.push({ metodo_pago_id: id, codigo: metodo.codigo, dia_corte: diaCorte, dia_limite_pago: diaLimite });
     });
   }
 
