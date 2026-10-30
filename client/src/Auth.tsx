@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './Auth.css';
 import { Cuestionario } from './Cuestionario';
+import { Ingresos } from './Ingresos';
 
 export const Auth: React.FC = () => {
   const [modo, setModo] = useState<'login' | 'register'>('login');
@@ -77,7 +78,7 @@ export const Auth: React.FC = () => {
           });
           const dataUnir = await resUnir.json();
           if (resUnir.ok) {
-            userObj = { ...userObj, familia_id: dataUnir.familia.id, rol_id: 2 };
+            userObj = { ...userObj, familia_id: dataUnir.familia.id, rol_id: dataUnir.rol_id };
             setMensaje({ texto: `¡Cuenta creada y vinculado a la familia "${dataUnir.familia.nombre}"!`, tipo: 'success' });
             window.history.replaceState({}, document.title, window.location.pathname);
           } else {
@@ -156,7 +157,7 @@ export const Auth: React.FC = () => {
       const data = await res.json();
       if (res.ok) {
         setMensaje({ texto: `Te has unido a la familia exitosamente.`, tipo: 'success' });
-        setUsuario({ ...usuario, familia_id: data.familia.id, rol_id: 2 });
+        setUsuario({ ...usuario, familia_id: data.familia.id, rol_id: data.rol_id });
       } else {
         setMensaje({ texto: data.error, tipo: 'error' });
       }
@@ -386,8 +387,10 @@ export const Auth: React.FC = () => {
                       <div className="code-box">{codigoGenerado}</div>
                     </div>
                   )}
+
                 </div>
               )}
+              <Ingresos />
             </div>
           )}
 

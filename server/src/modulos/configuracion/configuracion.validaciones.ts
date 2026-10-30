@@ -1,8 +1,6 @@
 // Validaciones del cuestionario de configuración de usuario (RF05 a RF08)
 // RNF08_ se valida todo lo que llega del cliente antes de tocar la base de datos
 // RNF21_ los mensajes dicen qué campo falló y cómo corregirlo
-import { metodoPorId } from '../../catalogos';
-
 const esEntero = (valor: any) => /^\d+$/.test(String(valor ?? ''));
 const esDia = (valor: any) => esEntero(valor) && Number(valor) >= 1 && Number(valor) <= 31;
 const esMonto = (valor: any) => /^\d+(\.\d{1,2})?$/.test(String(valor ?? ''));
@@ -10,13 +8,13 @@ const MONTO_MAXIMO = 9999999999.99;
 
 // catálogos que se consultan en la base de datos para validar los ids
 export interface CatalogosValidacion {
-  metodos: Map<number, boolean>; // id del método -> es_credito
+  metodos: Map<number, { nombre: string; es_credito: boolean }>;
   categorias: Set<number>;
 }
 
 export interface MetodoPagoUsuario {
   metodo_pago_id: number;
-  codigo: string; // valor que se guarda en configuracion_financiera.metodos_de_pago
+  alias: string;
   dia_corte: number | null;
   dia_limite_pago: number | null;
 }
@@ -82,8 +80,8 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
     body.metodos_pago.forEach((m: any, i: number) => {
       const etiqueta = `Método de pago ${i + 1}:`;
       const id = Number(m?.metodo_pago_id);
-      const metodo = metodoPorId(id);
-      if (!esEntero(m?.metodo_pago_id) || !metodo || !catalogos.metodos.has(id)) {
+      const metodo = catalogos.metodos.get(id);
+      if (!esEntero(m?.metodo_pago_id) || !metodo) {
         errores.push(`${etiqueta} selecciona un método de pago válido.`);
         return;
       }
@@ -97,9 +95,15 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
       }
       vistos.add(id);
 
+      const alias = typeof m?.alias === 'string' ? m.alias.trim() : 'Principal';
+      if (!alias || alias.length > 50) {
+        errores.push(`${etiqueta} el alias debe tener entre 1 y 50 caracteres.`);
+        return;
+      }
+
       let diaCorte: number | null = null;
       let diaLimite: number | null = null;
-      if (catalogos.metodos.get(id) === true) {
+      if (metodo.es_credito) {
         if (!esDia(m?.dia_corte)) {
           errores.push(`${etiqueta} el día de corte debe ser un número del 1 al 31.`);
         } else {
@@ -111,7 +115,7 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
           diaLimite = Number(m.dia_limite_pago);
         }
       }
-      metodos.push({ metodo_pago_id: id, codigo: metodo.codigo, dia_corte: diaCorte, dia_limite_pago: diaLimite });
+      metodos.push({ metodo_pago_id: id, alias, dia_corte: diaCorte, dia_limite_pago: diaLimite });
     });
   }
 

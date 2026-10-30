@@ -1,6 +1,4 @@
 // Validaciones del módulo de gastos
-import { metodoPorId } from '../../catalogos';
-
 const dosDigitos = (n: number) => String(n).padStart(2, '0');
 
 // fecha local en formato AAAA-MM-DD
@@ -32,7 +30,7 @@ export const validarGasto = (body: any) => {
   }
 
   // RF16_ Registro de método de pago
-  if (!esEnteroPositivo(body.metodo_pago_id) || !metodoPorId(Number(body.metodo_pago_id))) {
+  if (!esEnteroPositivo(body.metodo_pago_id)) {
     errores.push('Selecciona un método de pago.');
   }
 
@@ -62,8 +60,7 @@ export const validarGasto = (body: any) => {
     datos: {
       monto: Number(body.monto),
       categoria_id: Number(body.categoria_id),
-      // en la base de datos se guarda el texto (gastos.metodo_de_pago)
-      metodo_de_pago: metodoPorId(Number(body.metodo_pago_id))?.codigo ?? '',
+      metodo_pago_id: Number(body.metodo_pago_id),
       fecha,
       descripcion,
     },
