@@ -1,0 +1,304 @@
+/* Módulo 5: Presupuesto familiar */
+.ppto {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 900px;
+  margin: 0 auto;
+  text-align: left;
+  color: #233047;
+}
+
+.ppto h2,
+.ppto h3,
+.ppto p {
+  margin: 0;
+}
+
+.ppto-cargando {
+  margin-top: 40px;
+  text-align: center;
+  color: #475569;
+}
+
+.ppto-encabezado {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ppto-encabezado p {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.ppto-mes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ppto input {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e293b;
+  font-size: 0.95rem;
+}
+
+.ppto-tarjeta {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+
+.ppto-tarjeta h3 {
+  color: #17243b;
+  font-size: 1.05rem;
+}
+
+.ppto-nota {
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.ppto-leyenda {
+  padding: 10px 12px;
+  background: #f1f5f9;
+  border-left: 4px solid #0284c7;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.ppto-mensaje {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.ppto-mensaje--error {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.ppto-mensaje--ok {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.ppto-alerta {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.ppto-alerta--roja {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.ppto-alerta--naranja {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+/* RF21: resumen con gráfica */
+.ppto-resumen {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.ppto-dona {
+  display: grid;
+  width: 150px;
+  height: 150px;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.ppto-dona-centro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.ppto-dona-centro strong {
+  font-size: 1.5rem;
+}
+
+.ppto-dona-centro span {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.ppto-datos {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.ppto-dato {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.ppto-dato span {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.ppto-dato strong {
+  font-size: 1.15rem;
+}
+
+/* RF19: ingresos de la familia */
+.ppto-total-ingresos {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ppto-total-ingresos strong {
+  color: #16794c;
+  font-size: 1.6rem;
+}
+
+.ppto-miembros {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.ppto-miembros small {
+  color: #64748b;
+}
+
+.ppto-miembros li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.ppto-formulario {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ppto-formulario label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ppto button {
+  padding: 9px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #0284c7;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ppto button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ppto button.ppto-secundario {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+/* RF20: categorías */
+.ppto-categorias {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ppto-categoria {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ppto-categoria-fila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ppto-categoria-fila input {
+  width: 140px;
+  text-align: right;
+}
+
+.ppto-categoria small {
+  color: #64748b;
+}
+
+.ppto-barra {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e2e8f0;
+}
+
+.ppto-barra div {
+  height: 100%;
+  border-radius: 6px;
+}
+
+.ppto-restante {
+  font-weight: 600;
+  color: #16794c;
+}
+
+.ppto-restante--mal {
+  color: #dc2626;
+}
+
+.ppto-botones {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ppto-alerta button {
+  margin-left: 6px;
+  padding: 5px 10px;
+  font-size: 0.85rem;
+}

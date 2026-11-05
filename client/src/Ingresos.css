@@ -298,3 +298,9 @@
     gap: 12px;
   }
 }
+
+.ingresos-solo-propietario {
+  color: #69768a;
+  font-size: 0.8rem;
+  font-style: italic;
+}

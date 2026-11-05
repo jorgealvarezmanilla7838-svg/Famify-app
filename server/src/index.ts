@@ -11,6 +11,7 @@ import { pool } from './db';
 import gastosRouter from './modulos/gastos/gastos.routes';
 import ingresosRouter from './modulos/ingresos/ingresos.routes';
 import configuracionRouter from './modulos/configuracion/configuracion.routes';
+import presupuestoRouter from './modulos/presupuesto/presupuesto.routes';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
@@ -402,6 +403,7 @@ app.get('/api/auth/estado-familia/:familia_id', verificarToken, async (req: Auth
 app.use('/api/configuracion', verificarToken, configuracionRouter);
 app.use('/api/gastos', verificarToken, gastosRouter);
 app.use('/api/ingresos', verificarToken, ingresosRouter);
+app.use('/api/presupuesto', verificarToken, presupuestoRouter); // Módulo 5
 
 // Endpoint para que un usuario elimine su propia cuenta
 app.post('/api/auth/dar-de-baja', verificarToken, async (req: AuthRequest, res: Response) => {

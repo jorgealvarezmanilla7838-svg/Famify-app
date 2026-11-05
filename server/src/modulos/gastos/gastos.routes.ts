@@ -2,6 +2,7 @@ import express, { Response } from 'express';
 import { pool } from '../../db';
 import { PeticionGastos, cargarContexto, exigirPermiso } from './gastos.permisos';
 import { validarGasto, leerPeriodo, leerId } from './gastos.validaciones';
+import { enviarAlertasPresupuesto } from '../presupuesto/presupuesto.alertas';
 
 const router = express.Router();
 
@@ -58,6 +59,8 @@ router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, 
   // Si envían un ID numérico de método de pago, se asigna 'efectivo' como predeterminado para cumplir el CHECK
   const metodoPago = typeof datos.metodo_pago_id === 'string' ? datos.metodo_pago_id : 'efectivo';
 
+  const antesDelGasto = new Date();
+
   try {
     const r = await pool.query(
       `INSERT INTO gastos (familia_id, usuario_id, categoria_id, metodo_de_pago, monto, fecha, descripcion)
@@ -66,6 +69,8 @@ router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, 
        RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
       [familiaId, usuarioId, datos.categoria_id, metodoPago, datos.monto, datos.fecha, datos.descripcion]
     );
+    // RF22_ Si el gasto hizo que se llegara al límite del presupuesto, se manda el correo de alerta
+    void enviarAlertasPresupuesto(familiaId, antesDelGasto);
     return res.status(201).json({ success: true, message: 'Gasto registrado con éxito.', gasto: r.rows[0] });
   } catch (err: any) {
     return responderError(res, err, 'registrar el gasto');
@@ -97,6 +102,7 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
       return res.status(403).json({ error: 'Solo puedes modificar tus propios gastos.' });
     }
 
+    const antesDelGasto = new Date();
     const r = await pool.query(
       `UPDATE gastos
           SET categoria_id = $3::bigint, metodo_de_pago = $4::varchar, monto = $5::numeric,
@@ -105,6 +111,8 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
         RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
       [id, familiaId, datos.categoria_id, metodoPago, datos.monto, datos.fecha, datos.descripcion]
     );
+    // RF22_ Igual que al registrar: si el cambio llegó al límite, se avisa por correo
+    void enviarAlertasPresupuesto(familiaId, antesDelGasto);
     return res.json({ success: true, message: 'Gasto actualizado.', gasto: r.rows[0] });
   } catch (err: any) {
     return responderError(res, err, 'editar el gasto');

@@ -336,6 +336,18 @@ export const Auth: React.FC<AuthProps> = ({ onLogin, token }) => {
   // ---------------------------------------------------------------------
   // PANTALLA 2: Panel de Administración de Familia
   // ---------------------------------------------------------------------
+  // RF03_ Solo el administrador puede invitar integrantes
+  let miId = 0;
+  try {
+    const cuerpo = (tokenActivo ?? '').split('.')[1] ?? '';
+    miId = Number(JSON.parse(atob(cuerpo.replace(/-/g, '+').replace(/_/g, '/'))).id);
+  } catch {
+    miId = 0;
+  }
+  const soyAdmin = Boolean(
+    estadoFamilia?.miembros?.some((m: any) => Number(m.id) === miId && m.rol === 'administrador')
+  );
+
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', background: '#c0c0c0', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
       <h2>👨‍👩‍👧‍👦 Administración de la Familia</h2>
@@ -372,6 +384,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin, token }) => {
         </div>
       )}
 
+      {soyAdmin && (
       <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', marginTop: '20px' }}>
         <h3>Invitar nuevo integrante</h3>
         <form onSubmit={handleGenerarInvitacion}>
@@ -396,6 +409,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin, token }) => {
           </div>
         )}
       </div>
+      )}
 
       <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '1px solid #e2e8f0', textAlign: 'right' }}>
         <button

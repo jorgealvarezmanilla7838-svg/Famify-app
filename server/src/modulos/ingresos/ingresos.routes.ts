@@ -37,8 +37,10 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
       ),
       pool.query(
         `SELECT i.id, to_char(i.fecha, 'YYYY-MM-DD') AS fecha,
-                i.monto, i.fuente, i.tipo_de_ingreso AS tipo, i.periodicidad, i.usuario_id
+                i.monto, i.fuente, i.tipo_de_ingreso AS tipo, i.periodicidad, i.usuario_id,
+                u.nombre AS propietario
            FROM ingresos i
+           JOIN usuario u ON u.id = i.usuario_id
           WHERE ${filtros.join(' AND ')}
           ORDER BY i.fecha DESC, i.id DESC`,
         valores

@@ -4,6 +4,7 @@ import { Auth } from './Auth';
 import { Cuestionario } from './Cuestionario';
 import { Ingresos } from './Ingresos';
 import Gastos from './Gastos';
+import { Presupuesto } from './Presupuesto';
 
 interface UsuarioActual {
   id: number;
@@ -16,7 +17,7 @@ interface UsuarioActual {
 
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [vista, setVista] = useState<'familia' | 'gastos' | 'ingresos'>('familia');
+  const [vista, setVista] = useState<'familia' | 'gastos' | 'ingresos' | 'presupuesto'>('familia');
   // datos del usuario leídos del servidor (no del token, que puede estar viejo)
   const [usuario, setUsuario] = useState<UsuarioActual | null>(null);
   const [cargandoUsuario, setCargandoUsuario] = useState<boolean>(Boolean(localStorage.getItem('token')));
@@ -143,6 +144,21 @@ function App() {
           >
             📈 Gestión de Ingresos
           </button>
+          {/* Módulo 5: Presupuesto familiar */}
+          <button 
+            onClick={() => setVista('presupuesto')} 
+            style={{ 
+              padding: '8px 14px', 
+              background: vista === 'presupuesto' ? '#0284c7' : '#334155', 
+              color: '#fff', 
+              border: 'none', 
+              borderRadius: '6px', 
+              cursor: 'pointer',
+              fontWeight: 'bold'
+            }}
+          >
+            💰 Presupuesto Familiar
+          </button>
           <button 
             onClick={cerrarSesion} 
             style={{ 
@@ -165,6 +181,7 @@ function App() {
         {vista === 'familia' && <Auth token={token} />}
         {vista === 'gastos' && <Gastos token={token} />}
         {vista === 'ingresos' && <Ingresos />}
+        {vista === 'presupuesto' && <Presupuesto token={token} />}
       </main>
     </div>
   );

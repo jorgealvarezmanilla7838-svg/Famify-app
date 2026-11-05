@@ -11,6 +11,7 @@ interface Ingreso {
   fuente: string;
   tipo: TipoIngreso;
   periodicidad: Periodicidad;
+  propietario: string;
   es_mio: boolean;
 }
 
@@ -313,7 +314,7 @@ export const Ingresos = () => {
           <div className="ingresos-tabla-contenedor">
             <table className="ingresos-tabla">
               <thead>
-                <tr><th>Fecha</th><th>Fuente</th><th>Tipo</th><th>Periodicidad</th><th>Monto</th><th>Acciones</th></tr>
+                <tr><th>Fecha</th><th>Fuente</th><th>Tipo</th><th>Periodicidad</th><th>Monto</th><th>Acciones</th><th>Ingreso de</th></tr>
               </thead>
               <tbody>
                 {datos.ingresos.map((ingreso) => (
@@ -326,13 +327,18 @@ export const Ingresos = () => {
                     <td>{etiquetasPeriodicidad[ingreso.periodicidad]}</td>
                     <td className="ingresos-monto">{formatoMoneda(ingreso.monto)}</td>
                     <td>
-                      {ingreso.es_mio && (
+                      {ingreso.es_mio ? (
                         <div className="ingresos-acciones">
                           <button type="button" onClick={() => editarIngreso(ingreso)}>Editar</button>
                           <button type="button" className="ingresos-eliminar" onClick={() => void eliminarIngreso(ingreso.id)}>Eliminar</button>
                         </div>
+                      ) : (
+                        <span className="ingresos-solo-propietario">
+                          Solo quien registró este ingreso puede editarlo o eliminarlo
+                        </span>
                       )}
                     </td>
+                    <td>{ingreso.propietario}</td>
                   </tr>
                 ))}
               </tbody>
