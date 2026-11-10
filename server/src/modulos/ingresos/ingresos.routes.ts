@@ -1,6 +1,6 @@
 import { Router, type Response } from 'express';
 import { pool } from '../../db';
-import { type PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
+import { type PeticionGastos, cargarContexto, exigirPermiso } from '../gastos/gastos.permisos';
 import { leerPeriodo } from '../gastos/gastos.validaciones';
 import { validarIngreso } from './ingresos.validaciones';
 
@@ -16,6 +16,7 @@ const responderError = (res: Response, err: any, accion: string) => {
   return res.status(500).json({ error: 'Ocurrió un problema en el servidor. Intenta de nuevo.' });
 };
 
+// RF012_ Consulta de ingresos propios por periodo
 router.get('/', async (req: PeticionGastos, res: Response) => {
   const { usuarioId } = req.contexto!;
   const periodo = leerPeriodo(req.query);
@@ -61,7 +62,8 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
   }
 });
 
-router.post('/', async (req: PeticionGastos, res: Response) => {
+// RF09_ Registro de ingresos. RF011_ con su clasificación (salario, tanda, préstamo u otro)
+router.post('/', exigirPermiso('ingresos.registrar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId } = req.contexto!;
   const { errores, datos } = validarIngreso(req.body);
   if (errores.length > 0) return res.status(400).json({ error: errores.join(' '), errores });
@@ -80,7 +82,8 @@ router.post('/', async (req: PeticionGastos, res: Response) => {
   }
 });
 
-router.put('/:id', async (req: PeticionGastos, res: Response) => {
+// RF010_ Edición de ingresos propios
+router.put('/:id', exigirPermiso('ingresos.editar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId } = req.contexto!;
   const id = typeof req.params.id === 'string' ? req.params.id : '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
@@ -114,7 +117,8 @@ router.put('/:id', async (req: PeticionGastos, res: Response) => {
   }
 });
 
-router.delete('/:id', async (req: PeticionGastos, res: Response) => {
+// RF010_ Eliminación de ingresos propios
+router.delete('/:id', exigirPermiso('ingresos.editar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId } = req.contexto!;
   const id = typeof req.params.id === 'string' ? req.params.id : '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {

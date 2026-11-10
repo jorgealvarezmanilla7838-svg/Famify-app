@@ -25,6 +25,7 @@ const responderError = (res: Response, err: any, accion: string) => {
   return res.status(500).json({ error: 'Ocurrió un problema en el servidor. Intenta de nuevo.' });
 };
 
+// RF06_ / RF08_ Listas para el menú de métodos de pago y las categorías de gastos fijos
 router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   const { familiaId } = req.contexto!;
   try {
@@ -43,6 +44,7 @@ router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   }
 });
 
+// Devuelve la configuración guardada para poder editarla
 router.get('/', async (req: PeticionGastos, res: Response) => {
   const { usuarioId } = req.contexto!;
   try {
@@ -94,7 +96,9 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
   }
 });
 
-router.post('/completar', async (req: PeticionGastos, res: Response) => {
+// RF05_ a RF08_ Guarda toda la configuración en una transacción (RNF15).
+// Al completar el registro solo se admite una vez; después se usa la edición.
+const guardarConfiguracion = async (req: PeticionGastos, res: Response, soloPrimeraVez: boolean) => {
   const { usuarioId, familiaId } = req.contexto!;
 
   let catalogos;
@@ -144,7 +148,7 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
       transaccionIniciada = false;
       return res.status(404).json({ error: 'Usuario no encontrado o inactivo.' });
     }
-    if (actual.rows[0].perfil_completo === true) {
+    if (soloPrimeraVez && actual.rows[0].perfil_completo === true) {
       yaCompleto = true;
       await cliente.query('ROLLBACK');
       transaccionIniciada = false;
@@ -218,12 +222,17 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
   if (yaCompleto) {
     return res.status(409).json({ error: 'Tu perfil ya estaba completo.' });
   }
-  return res.status(201).json({
+  return res.status(soloPrimeraVez ? 201 : 200).json({
     success: true,
-    message: 'Configuración guardada. ¡Tu perfil quedó completo!',
+    message: soloPrimeraVez ? 'Configuración guardada. ¡Tu perfil quedó completo!' : 'Configuración actualizada.',
     perfil_completo: true,
     recibe_sueldo: datos.recibe_sueldo,
   });
-});
+};
+
+router.post('/completar', (req: PeticionGastos, res: Response) => guardarConfiguracion(req, res, true));
+
+// RF034_ Los recordatorios, tarjetas y gastos fijos se pueden cambiar después del registro
+router.put('/', (req: PeticionGastos, res: Response) => guardarConfiguracion(req, res, false));
 
 export default router;
