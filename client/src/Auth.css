@@ -22,7 +22,7 @@
 
 .auth-header span {
   font-size: 0.85rem;
-  color: #7f8c8d;
+  color: #56637a;
 }
 
 .alert-box {
@@ -30,7 +30,7 @@
   border-radius: 8px;
   font-size: 0.9rem;
   margin-bottom: 20px;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .alert-success {
@@ -73,12 +73,12 @@
 
 .form-input:focus {
   outline: none;
-  border-color: #3498db;
+  border-color: #208653;
 }
 
 .btn-primary {
   padding: 12px;
-  background-color: #3498db;
+  background-color: #208653;
   color: #ffffff;
   border: none;
   border-radius: 6px;
@@ -89,7 +89,7 @@
 }
 
 .btn-primary:hover {
-  background-color: #2980b9;
+  background-color: #176f43;
 }
 
 .btn-secondary {
@@ -104,7 +104,7 @@
 
 .btn-danger {
   padding: 10px;
-  background-color: #e74c3c;
+  background-color: #b3322f;
   color: #ffffff;
   border: none;
   border-radius: 6px;
@@ -116,7 +116,7 @@
 .btn-link {
   background: none;
   border: none;
-  color: #3498db;
+  color: #208653;
   cursor: pointer;
   font-size: 0.85rem;
   margin-top: 15px;
@@ -141,4 +141,16 @@
   word-break: break-all;
   font-size: 0.85rem;
   margin-top: 8px;
+}
+.auth-marca { margin: 0; font-size: 1.5rem; letter-spacing: 0; color: #2c3e50; }
+.auth-etiqueta { font-size: 0.85rem; font-weight: 600; color: #34495e; }
+.auth-container { text-align: left; box-sizing: border-box; }
+.auth-container h2 { font-size: 1.15rem; }
+.aviso-privacidad { font-size: 0.85rem; color: #34495e; }
+.aviso-privacidad summary { color: #208653; cursor: pointer; }
+.aviso-privacidad p { margin-top: 8px; }
+.form-group .aviso-aceptar { display: flex; align-items: flex-start; gap: 8px; font-weight: 400; cursor: pointer; }
+
+@media (max-width: 600px) {
+  .auth-container { margin: 12px; padding: 18px; }
 }

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { FC, FormEvent } from 'react';
 import './Cuestionario.css';
+import { ErrorApi, pedir } from './api';
 
 // Cuestionario de configuración de usuario (RF05 a RF08)
 // Lo contestan tanto el administrador como los integrantes nuevos para completar su registro (RF04)
-
-const API = 'http://localhost:4000';
 
 interface MetodoCatalogo {
   id: number;
@@ -32,6 +31,8 @@ interface GastoFijo {
 interface Props {
   nombre: string;
   onCompletado: (datos: { recibe_sueldo: boolean }) => void;
+  // true: precarga lo guardado para editarlo después del registro (RF034)
+  edicion?: boolean;
 }
 
 // atajos para los gastos fijos más comunes (RF08)
@@ -43,11 +44,6 @@ const ATAJOS = [
   { texto: 'Renta', categoria: 'Hogar' },
 ];
 
-const cabeceras = () => ({
-  'Content-Type': 'application/json',
-  Authorization: `Bearer ${localStorage.getItem('token')}`,
-});
-
 const montoValido = (t: string) => /^\d+(\.\d{1,2})?$/.test(t.trim()) && Number(t) > 0;
 const diaValido = (t: string) => /^\d+$/.test(t.trim()) && Number(t) >= 1 && Number(t) <= 31;
 const avisoValido = (t: string) => /^\d+$/.test(t.trim()) && Number(t) <= 30;
@@ -57,7 +53,7 @@ const gastoVacio = (): GastoFijo => ({ descripcion: '', categoria_id: '', monto:
 
 type Paso = 'ingresos' | 'metodos' | 'tarjetas' | 'gastos';
 
-export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
+export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false }) => {
   const [metodosCat, setMetodosCat] = useState<MetodoCatalogo[]>([]);
   const [categoriasCat, setCategoriasCat] = useState<CategoriaCatalogo[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -77,26 +73,51 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
   const [indice, setIndice] = useState(0);
   const [errores, setErrores] = useState<string[]>([]);
   const [enviando, setEnviando] = useState(false);
+  const [guardado, setGuardado] = useState('');
 
   useEffect(() => {
     const cargar = async () => {
       try {
-        const res = await fetch(`${API}/api/configuracion/catalogos`, { headers: cabeceras() });
-        const data = await res.json();
-        if (!res.ok) {
-          setErrorCarga(data.error || 'No se pudo cargar el cuestionario.');
-        } else {
-          setMetodosCat(data.metodos_pago);
-          setCategoriasCat(data.categorias);
+        const [catalogos, actual] = await Promise.all([
+          pedir('/api/configuracion/catalogos'),
+          edicion ? pedir('/api/configuracion') : Promise.resolve(null),
+        ]);
+        setMetodosCat(catalogos.metodos_pago);
+        setCategoriasCat(catalogos.categorias);
+        if (actual) {
+          const conf = actual.configuracion;
+          setRecibeSueldo(conf.recibe_sueldo);
+          setIngresoPrincipal(conf.ingreso_principal === null ? '' : String(conf.ingreso_principal));
+          setTieneSecundarios(Boolean(conf.tiene_ingresos_secundarios));
+          setDiasIngreso(conf.dias_ingreso ?? []);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setMetodosSel([...new Set<number>(actual.metodos_pago.map((m: any) => Number(m.metodo_pago_id)))]);
+          setTarjetas(
+            actual.metodos_pago
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              .filter((m: any) => m.dia_corte !== null)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              .map((m: any) => ({ alias: m.alias, dia_corte: String(m.dia_corte), dia_limite_pago: String(m.dia_limite_pago) }))
+          );
+          setGastos(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            actual.gastos_fijos.map((g: any) => ({
+              descripcion: g.descripcion,
+              categoria_id: String(g.categoria_id),
+              monto: String(g.monto),
+              dia_pago: String(g.dia_pago),
+              dias_aviso: String(g.dias_aviso),
+            }))
+          );
         }
-      } catch {
-        setErrorCarga('Error de conexión con el servidor backend.');
+      } catch (err) {
+        setErrorCarga(err instanceof ErrorApi ? err.message : 'No se pudo cargar el cuestionario.');
       } finally {
         setCargando(false);
       }
     };
     cargar();
-  }, []);
+  }, [edicion]);
 
   const metodoCredito = metodosCat.find((m) => m.es_credito);
   const usaCredito = metodoCredito ? metodosSel.includes(metodoCredito.id) : false;
@@ -145,6 +166,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
     if (p === 'tarjetas') {
       if (tarjetas.length === 0) e.push('Agrega al menos una tarjeta de crédito.');
       tarjetas.forEach((t, i) => {
+        if (t.alias.trim().length > 50) e.push(`Tarjeta ${i + 1}: el alias admite hasta 50 caracteres.`);
         if (!diaValido(t.dia_corte)) e.push(`Tarjeta ${i + 1}: el día de corte debe ser un número del 1 al 31.`);
         if (!diaValido(t.dia_limite_pago)) e.push(`Tarjeta ${i + 1}: el día límite de pago debe ser un número del 1 al 31.`);
       });
@@ -172,9 +194,9 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
       metodos_pago: [
         ...sinCredito.map((id) => ({ metodo_pago_id: id })),
         ...(usaCredito && metodoCredito
-          ? tarjetas.slice(0, 1).map((t) => ({
+          ? tarjetas.map((t, i) => ({
               metodo_pago_id: metodoCredito.id,
-              alias: t.alias.trim() || 'Principal',
+              alias: t.alias.trim() || (i === 0 ? 'Principal' : `Tarjeta ${i + 1}`),
               dia_corte: Number(t.dia_corte),
               dia_limite_pago: Number(t.dia_limite_pago),
             }))
@@ -191,19 +213,17 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
 
     setEnviando(true);
     try {
-      const res = await fetch(`${API}/api/configuracion/completar`, {
-        method: 'POST',
-        headers: cabeceras(),
-        body: JSON.stringify(body),
+      await pedir(edicion ? '/api/configuracion' : '/api/configuracion/completar', {
+        metodo: edicion ? 'PUT' : 'POST',
+        cuerpo: body,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setErrores(data.errores && data.errores.length > 0 ? data.errores : [data.error]);
-        return;
+      if (edicion) {
+        setGuardado('Configuración actualizada.');
+        setIndice(0);
       }
       onCompletado({ recibe_sueldo: recibeSueldo === true });
-    } catch {
-      setErrores(['Error de conexión con el servidor backend.']);
+    } catch (err) {
+      setErrores(err instanceof ErrorApi ? err.errores : ['Ocurrió un problema. Intenta de nuevo.']);
     } finally {
       setEnviando(false);
     }
@@ -213,6 +233,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
     e.preventDefault();
     const e1 = validarPaso(paso);
     setErrores(e1);
+    setGuardado('');
     if (e1.length > 0) return;
     if (esUltimo) {
       finalizar();
@@ -237,11 +258,13 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
   };
 
   return (
-    <form onSubmit={manejarEnvio} className="cuestionario">
+    <form onSubmit={manejarEnvio} className="cuestionario" noValidate>
       <div className="cuestionario-encabezado">
-        <h3>Completa tu registro{nombre ? `, ${nombre.split(' ')[0]}` : ''}</h3>
+        <h3>{edicion ? 'Mi configuración' : `Completa tu registro${nombre ? `, ${nombre.split(' ')[0]}` : ''}`}</h3>
         <p className="cuestionario-nota">
-          Unas preguntas rápidas sobre cómo manejas tu dinero. Con esto Famify te manda recordatorios y arma tus resúmenes.
+          {edicion
+            ? 'Actualiza tu sueldo, métodos de pago, tarjetas y los gastos fijos que Famify te recuerda.'
+            : 'Unas preguntas rápidas sobre cómo manejas tu dinero. Con esto Famify te manda recordatorios y arma tus resúmenes.'}
         </p>
         <div className="cuestionario-progreso" aria-label={`Paso ${indice + 1} de ${pasos.length}`}>
           {pasos.map((p, i) => (
@@ -252,6 +275,8 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
           Paso {indice + 1} de {pasos.length}: {titulos[paso]}
         </span>
       </div>
+
+      {guardado && <div className="alert-box alert-success" role="status">{guardado}</div>}
 
       {errores.length > 0 && (
         <div className="alert-box alert-error" role="alert">
@@ -291,7 +316,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
           {recibeSueldo === false && (
             <p className="cuestionario-aviso">
               Sin sueldo no vas a poder registrar ingresos en Famify, pero sí gastos, metas de ahorro y reportes. Si después
-              eso cambia, el administrador puede ajustar tus permisos.
+              eso cambia, puedes actualizarlo en Mi configuración.
             </p>
           )}
 
@@ -377,11 +402,22 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
       {paso === 'tarjetas' && (
         <div className="cuestionario-seccion">
           <p className="cuestionario-nota">
-            Escribe el día del mes de tu corte y el día límite para pagar. Con esto te avisamos antes de que venza. Se registra una
-            sola tarjeta de crédito.
+            Escribe el día del mes de tu corte y el día límite para pagar. Con esto te avisamos antes de que venza.
           </p>
           {tarjetas.map((t, i) => (
             <div key={i} className="fila-tarjeta">
+              <div className="form-group">
+                <label htmlFor={`alias-${i}`}>Nombre para identificarla (no escribas el número de tarjeta)</label>
+                <input
+                  id={`alias-${i}`}
+                  type="text"
+                  maxLength={50}
+                  className="form-input"
+                  placeholder="Ej. Tarjeta azul"
+                  value={t.alias}
+                  onChange={(e) => cambiarTarjeta(i, 'alias', e.target.value)}
+                />
+              </div>
               <div className="fila-dos">
                 <div className="form-group">
                   <label htmlFor={`corte-${i}`}>Día de corte</label>
@@ -410,8 +446,18 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
                   />
                 </div>
               </div>
+              {tarjetas.length > 1 && (
+                <button type="button" className="btn-link-chico" onClick={() => setTarjetas(tarjetas.filter((_, k) => k !== i))}>
+                  Quitar esta tarjeta
+                </button>
+              )}
             </div>
           ))}
+          <div className="atajos">
+            <button type="button" className="chip" onClick={() => setTarjetas([...tarjetas, tarjetaVacia()])}>
+              + Otra tarjeta
+            </button>
+          </div>
         </div>
       )}
 
@@ -522,7 +568,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado }) => {
           </button>
         )}
         <button type="submit" className="btn-primary" disabled={enviando}>
-          {esUltimo ? (enviando ? 'Guardando...' : 'Finalizar registro') : 'Siguiente'}
+          {esUltimo ? (enviando ? 'Guardando...' : edicion ? 'Guardar cambios' : 'Finalizar registro') : 'Siguiente'}
         </button>
       </div>
     </form>
