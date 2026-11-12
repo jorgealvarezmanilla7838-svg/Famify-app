@@ -9,6 +9,8 @@ Estados:
 - **Parcial:** cubierto en parte; se indica qué falta.
 - **Sin probar:** no fue posible comprobarlo en el entorno disponible.
 
+> **Importante:** las pruebas y mediciones de esta matriz se hicieron antes de adaptar el servidor al esquema oficial de la base de datos. Deben repetirse con la base oficial antes de entregar.
+
 Las mediciones se hicieron en una sola máquina, con servidor, cliente de prueba y base de datos juntos. No incluyen la latencia de una red real.
 
 ## Requerimientos funcionales
@@ -16,7 +18,7 @@ Las mediciones se hicieron en una sola máquina, con servidor, cliente de prueba
 | Módulo | Requerimientos | Estado | Evidencia |
 | --- | --- | --- | --- |
 | Gestión de usuarios | RF01 a RF04 | Cumple | Registro, familia, invitación por enlace y por código, en API y navegador |
-| Configuración de usuario | RF05 a RF08 | Cumple | Cuestionario con varias tarjetas; editable después en Mi configuración |
+| Configuración de usuario | RF05 a RF08 | Cumple | Cuestionario con una tarjeta de crédito (la base guarda un día de corte y una fecha límite por usuario); editable después en Mi configuración |
 | Gestión de ingresos | RF09 a RF012 | Cumple | Alta, edición, baja, clasificación y consulta por periodo |
 | Gestión de gastos | RF013 a RF018 | Cumple | Alta, edición, baja, categoría, método de pago y lista paginada |
 | Presupuesto familiar | RF019 a RF022 | Cumple | Límite total y por categoría, disponible y alertas |
@@ -38,7 +40,7 @@ Criterio aplicado en RF05: quien responde que no recibe sueldo no puede registra
 | RNF04 Aislamiento por familia | Cumple | Probado entre dos familias |
 | RNF05 Sesiones | Cumple | 30 minutos de inactividad; token invalidado al salir |
 | RNF06 Invitaciones | Cumple | 48 horas y un solo uso |
-| RNF07 Datos de tarjetas | Cumple | Solo alias y días; se rechaza un alias con número de tarjeta |
+| RNF07 Datos de tarjetas | Cumple | Solo el día de corte y la fecha límite de pago; la base no tiene columnas para número ni CVV |
 | RNF08 SQL y XSS | Cumple | Consultas con parámetros y limpieza de entradas |
 | RNF09 Respuesta menor a 3 s | Cumple | Con 23,000 registros: máximo 42 ms |
 | RNF10 Reportes menores a 10 s | Cumple | Un año con 23,000 registros: máximo 416 ms |
@@ -65,10 +67,6 @@ Criterio aplicado en RF05: quien responde que no recibe sueldo no puede registra
 | RNF31 Aviso de privacidad | Parcial | Se muestra y se exige aceptarlo; falta el domicilio y contacto reales del responsable |
 | RNF32 Eliminación de datos | Cumple | Baja y eliminación con anonimización probadas |
 
-## Actualizar una base existente
+## Base de datos
 
-```bash
-npm --prefix server run db:aplicar
-```
-
-El script solo agrega lo que falta y no borra datos.
+El esquema es el script oficial `famify_db.sql` y no se modifica: el código se adapta a él. Si la base ya existe, no hace falta volver a aplicarlo.

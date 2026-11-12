@@ -37,7 +37,7 @@ export const Presupuesto: FC<{ permisos: string[] }> = ({ permisos }) => {
   const [filas, setFilas] = useState<FilaCategoria[]>([]);
   const [editando, setEditando] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
-  const puedeGestionar = permisos.includes('presupuestos.gestionar');
+  const puedeGestionar = permisos.includes('presupuesto.gestionar');
 
   const cargar = useCallback(async () => {
     try {

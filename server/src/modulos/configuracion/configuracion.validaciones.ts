@@ -66,8 +66,8 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
     }
   }
 
-  // RF06_ y RF07_ métodos de pago. Cada tarjeta de crédito lleva alias, día de corte y día
-  // límite, y se pueden registrar varias; los demás métodos solo una vez.
+  // RF06_ y RF07_ métodos de pago. La tarjeta de crédito lleva día de corte y día límite de pago;
+  // la base de datos guarda una sola tarjeta de crédito por usuario (configuracion_financiera).
   // RNF07_ nunca se guarda el número de la tarjeta.
   const metodos: MetodoPagoUsuario[] = [];
   const aliasCredito = new Set<string>();
@@ -101,8 +101,8 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
         return;
       }
       if (metodo.es_credito) {
-        if (aliasCredito.has(alias.toLowerCase())) {
-          errores.push(`${etiqueta} ya tienes una tarjeta con el alias "${alias}".`);
+        if (aliasCredito.size > 0) {
+          errores.push(`${etiqueta} solo se puede registrar una tarjeta de crédito.`);
           return;
         }
         aliasCredito.add(alias.toLowerCase());

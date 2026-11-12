@@ -29,9 +29,9 @@ export const Metas: FC<{ permisos: string[]; esAdmin: boolean }> = ({ permisos, 
   const [aportes, setAportes] = useState<Record<number, string>>({});
   const [cargando, setCargando] = useState(true);
   const [integrantes, setIntegrantes] = useState<{ id: number; nombre: string }[]>([]);
-  const puedeCrear = permisos.includes('metas.crear');
+  const puedeCrear = permisos.includes('metas.gestionar');
   const puedeAportar = permisos.includes('metas.aportar');
-  const puedeEditar = permisos.includes('metas.editar');
+  const puedeEditar = permisos.includes('metas.gestionar');
 
   const cargar = useCallback(async () => {
     try {

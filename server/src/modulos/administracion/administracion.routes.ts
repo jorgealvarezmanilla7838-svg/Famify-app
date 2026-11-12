@@ -2,11 +2,10 @@ import { Router, type NextFunction, type Response } from 'express';
 import type { PoolClient } from 'pg';
 import { enTransaccion, pool } from '../../db';
 import { ErrorNegocio, responderError, textoRecortado } from '../compartido/errores';
+import { PERMISOS_EDITABLES } from '../compartido/permisos';
+import { ROL_ADMIN, ROL_INTEGRANTE, rolIntegranteDeFamilia } from '../compartido/roles';
 import { type PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
 import { leerId } from '../gastos/gastos.validaciones';
-
-const ROL_ADMIN = 1;
-const ROL_INTEGRANTE = 2;
 
 const router = Router();
 router.use(cargarContexto);
@@ -21,44 +20,26 @@ const soloAdmin = (req: PeticionGastos, res: Response, next: NextFunction) => {
 // Bloquea a la familia para que dos cambios simultáneos no la dejen sin administrador
 const integrantesBloqueados = async (cliente: PoolClient, familiaId: number) => {
   const filas = await cliente.query(
-    'SELECT id, rol_id FROM usuarios WHERE familia_id = $1::bigint AND activo ORDER BY id FOR UPDATE',
+    'SELECT id, rol_id FROM usuario WHERE familia_id = $1::bigint AND activo ORDER BY id FOR UPDATE',
     [familiaId]
   );
   return filas.rows.map((f: any) => ({ id: Number(f.id), rol_id: Number(f.rol_id) }));
 };
 
-// RNF32_ Borra los datos personales. Los gastos quedan a nombre de "Usuario eliminado"
-// para no alterar la contabilidad histórica de la familia.
-const anonimizarUsuario = async (cliente: PoolClient, usuarioId: number) => {
-  await cliente.query('DELETE FROM ingresos WHERE usuario_id = $1::varchar', [String(usuarioId)]);
-  await cliente.query('DELETE FROM usuario_metodos_pago WHERE usuario_id = $1::bigint', [usuarioId]);
-  await cliente.query('DELETE FROM gastos_fijos WHERE usuario_id = $1::bigint', [usuarioId]);
-  await cliente.query('DELETE FROM metas_ahorro WHERE usuario_id = $1::bigint', [usuarioId]);
-  await cliente.query('DELETE FROM notificaciones WHERE usuario_id = $1::bigint', [usuarioId]);
-  await cliente.query('DELETE FROM sesiones WHERE usuario_id = $1::bigint', [usuarioId]);
-  await cliente.query('UPDATE invitaciones SET email_invitado = NULL WHERE usada_por = $1::bigint', [usuarioId]);
-  await cliente.query(
-    `UPDATE usuarios
-        SET nombre = 'Usuario eliminado', email = 'eliminado-' || id || '@famify.invalid',
-            password_hash = '!', activo = false, familia_id = NULL, rol_id = NULL,
-            recibe_sueldo = NULL, ingreso_principal = NULL, tiene_ingresos_secundarios = false,
-            dias_ingreso = NULL, perfil_completo = false
-      WHERE id = $1::bigint`,
-    [usuarioId]
-  );
-};
+// El cliente solo distingue administrador (1) e integrante (2), aunque la familia tenga su propio rol integrante
+const rolParaCliente = (rolId: number) => (Number(rolId) === ROL_ADMIN ? ROL_ADMIN : ROL_INTEGRANTE);
 
 // RF037_ Consulta de integrantes: esta lista con correos es solo del administrador
 router.get('/integrantes', soloAdmin, async (req: PeticionGastos, res: Response) => {
   try {
     const [familia, integrantes] = await Promise.all([
-      pool.query('SELECT nombre FROM familias WHERE id = $1::bigint', [req.contexto!.familiaId]),
+      pool.query('SELECT nombre FROM familia WHERE id = $1::bigint', [req.contexto!.familiaId]),
       pool.query(
         `SELECT u.id, u.nombre, u.email, u.rol_id, r.nombre AS rol,
                 to_char(u.created_at, 'YYYY-MM-DD') AS desde
-           FROM usuarios u JOIN roles r ON r.id = u.rol_id
+           FROM usuario u JOIN rolfamiliar r ON r.id = u.rol_id
           WHERE u.familia_id = $1::bigint AND u.activo
-          ORDER BY u.rol_id, u.nombre`,
+          ORDER BY (u.rol_id <> ${ROL_ADMIN}), u.nombre`,
         [req.contexto!.familiaId]
       ),
     ]);
@@ -68,6 +49,7 @@ router.get('/integrantes', soloAdmin, async (req: PeticionGastos, res: Response)
       integrantes: integrantes.rows.map((i: any) => ({
         ...i,
         id: Number(i.id),
+        rol_id: rolParaCliente(i.rol_id),
         es_yo: Number(i.id) === req.contexto!.usuarioId,
       })),
     });
@@ -80,10 +62,10 @@ router.get('/integrantes', soloAdmin, async (req: PeticionGastos, res: Response)
 router.get('/integrantes/nombres', async (req: PeticionGastos, res: Response) => {
   try {
     const [familia, filas] = await Promise.all([
-      pool.query('SELECT nombre FROM familias WHERE id = $1::bigint', [req.contexto!.familiaId]),
+      pool.query('SELECT nombre FROM familia WHERE id = $1::bigint', [req.contexto!.familiaId]),
       pool.query(
         `SELECT u.id, u.nombre, r.nombre AS rol
-           FROM usuarios u JOIN roles r ON r.id = u.rol_id
+           FROM usuario u JOIN rolfamiliar r ON r.id = u.rol_id
           WHERE u.familia_id = $1::bigint AND u.activo
           ORDER BY u.nombre`,
         [req.contexto!.familiaId]
@@ -99,9 +81,9 @@ router.get('/integrantes/nombres', async (req: PeticionGastos, res: Response) =>
   }
 });
 
-// RF038_ Asignación y modificación de roles
+// RF038_ Asignación y modificación de roles (fn_cambiar_rol valida permiso, familia y rol)
 router.put('/integrantes/:id/rol', soloAdmin, async (req: PeticionGastos, res: Response) => {
-  const { familiaId } = req.contexto!;
+  const { usuarioId, familiaId } = req.contexto!;
   const id = leerId(req.params.id);
   const rolId = Number(req.body?.rol_id);
   if (!id) return res.status(400).json({ error: 'El integrante indicado no es válido.' });
@@ -118,7 +100,8 @@ router.put('/integrantes/:id/rol', soloAdmin, async (req: PeticionGastos, res: R
       if (objetivo.rol_id === ROL_ADMIN && rolId !== ROL_ADMIN && admins === 1) {
         throw new ErrorNegocio(400, 'La familia debe conservar al menos un administrador.');
       }
-      await cliente.query('UPDATE usuarios SET rol_id = $2::smallint WHERE id = $1::bigint', [id, rolId]);
+      const rolNuevo = rolId === ROL_ADMIN ? ROL_ADMIN : await rolIntegranteDeFamilia(cliente, familiaId);
+      await cliente.query('SELECT fn_cambiar_rol($1::bigint, $2::bigint, $3::smallint)', [usuarioId, id, rolNuevo]);
     });
     return res.json({ success: true, message: 'Rol actualizado.' });
   } catch (err: any) {
@@ -126,7 +109,8 @@ router.put('/integrantes/:id/rol', soloAdmin, async (req: PeticionGastos, res: R
   }
 });
 
-// RF040_ Eliminación de integrantes
+// RF040_ Eliminación de integrantes. RNF32_ fn_eliminar_integrante anonimiza sus datos personales
+// (los gastos e ingresos quedan a nombre de "Usuario eliminado" para no alterar la contabilidad de la familia).
 router.delete('/integrantes/:id', soloAdmin, async (req: PeticionGastos, res: Response) => {
   const { usuarioId, familiaId } = req.contexto!;
   const id = leerId(req.params.id);
@@ -141,7 +125,7 @@ router.delete('/integrantes/:id', soloAdmin, async (req: PeticionGastos, res: Re
       if (!integrantes.some((i) => i.id === id)) {
         throw new ErrorNegocio(404, 'El integrante no pertenece a tu familia.');
       }
-      await anonimizarUsuario(cliente, id);
+      await cliente.query('SELECT fn_eliminar_integrante($1::bigint, $2::bigint)', [usuarioId, id]);
     });
     return res.json({ success: true, message: 'Integrante eliminado y sus datos personales borrados.' });
   } catch (err: any) {
@@ -161,13 +145,11 @@ router.delete('/cuenta', async (req: PeticionGastos, res: Response) => {
       const integrantes = await integrantesBloqueados(cliente, familiaId);
       const yo = integrantes.find((i) => i.id === usuarioId);
       const otrosAdmins = integrantes.filter((i) => i.rol_id === ROL_ADMIN && i.id !== usuarioId).length;
-      if (yo?.rol_id === ROL_ADMIN && integrantes.length > 1 && otrosAdmins === 0) {
-        throw new ErrorNegocio(400, 'Antes de darte de baja, nombra a otro administrador de la familia.');
+      // La base de datos exige que la familia conserve al menos un administrador
+      if (yo?.rol_id === ROL_ADMIN && otrosAdmins === 0) {
+        throw new ErrorNegocio(400, 'Eres el único administrador de la familia. Antes de darte de baja, nombra a otro administrador.');
       }
-      await anonimizarUsuario(cliente, usuarioId);
-      if (integrantes.length === 1) {
-        await cliente.query('DELETE FROM familias WHERE id = $1::bigint', [familiaId]);
-      }
+      await cliente.query('SELECT fn_dar_de_baja($1::bigint)', [usuarioId]);
     });
     return res.json({ success: true, message: 'Tu cuenta fue eliminada.' });
   } catch (err: any) {
@@ -178,36 +160,64 @@ router.delete('/cuenta', async (req: PeticionGastos, res: Response) => {
 // RF039_ Permisos del rol integrante dentro de esta familia
 router.get('/permisos', soloAdmin, async (req: PeticionGastos, res: Response) => {
   try {
-    const filas = await pool.query(
-      `SELECT p.clave, p.descripcion,
-              COALESCE(frp.permitido, rp.permiso_clave IS NOT NULL) AS permitido
-         FROM permisos p
-         LEFT JOIN rol_permisos rp ON rp.permiso_clave = p.clave AND rp.rol_id = $2::smallint
-         LEFT JOIN familia_rol_permisos frp
-                ON frp.permiso_clave = p.clave AND frp.rol_id = $2::smallint AND frp.familia_id = $1::bigint
-        ORDER BY p.clave`,
-      [req.contexto!.familiaId, ROL_INTEGRANTE]
-    );
-    return res.json({ success: true, permisos: filas.rows });
+    const rolId = await rolIntegranteDeFamilia(pool, req.contexto!.familiaId);
+    const rol = await pool.query('SELECT permisos FROM rolfamiliar WHERE id = $1::smallint', [rolId]);
+    const activos = new Set<string>(String(rol.rows[0]?.permisos ?? '').split(',').filter(Boolean));
+    return res.json({
+      success: true,
+      permisos: PERMISOS_EDITABLES.map((p) => ({ clave: p.clave, descripcion: p.descripcion, permitido: activos.has(p.clave) })),
+    });
   } catch (err: any) {
     return responderError(res, err, 'consultar los permisos');
   }
 });
 
 router.put('/permisos', soloAdmin, async (req: PeticionGastos, res: Response) => {
+  const { usuarioId, familiaId } = req.contexto!;
   const clave = textoRecortado(req.body?.clave);
   if (!clave || typeof req.body?.permitido !== 'boolean') {
     return res.status(400).json({ error: 'Indica el permiso y si está permitido.' });
   }
+  if (!PERMISOS_EDITABLES.some((p) => p.clave === clave)) {
+    return res.status(404).json({ error: 'El permiso indicado no existe.' });
+  }
+
   try {
-    const existe = await pool.query('SELECT 1 FROM permisos WHERE clave = $1::varchar', [clave]);
-    if (existe.rows.length === 0) return res.status(404).json({ error: 'El permiso indicado no existe.' });
-    await pool.query(
-      `INSERT INTO familia_rol_permisos (familia_id, rol_id, permiso_clave, permitido)
-       VALUES ($1::bigint, $2::smallint, $3::varchar, $4::boolean)
-       ON CONFLICT (familia_id, rol_id, permiso_clave) DO UPDATE SET permitido = EXCLUDED.permitido`,
-      [req.contexto!.familiaId, ROL_INTEGRANTE, clave, req.body.permitido]
-    );
+    await enTransaccion(async (cliente) => {
+      // Los roles base no se pueden editar: la primera vez la familia recibe su propio rol "integrante",
+      // copia del rol base, y sus integrantes e invitaciones pendientes pasan a usarlo.
+      let rolId = await rolIntegranteDeFamilia(cliente, familiaId);
+      if (rolId === ROL_INTEGRANTE) {
+        const base = await cliente.query('SELECT permisos FROM rolfamiliar WHERE id = $1::smallint', [ROL_INTEGRANTE]);
+        const creado = await cliente.query('SELECT fn_crear_rol_familiar($1::bigint, $2::text, $3::text) AS id', [
+          usuarioId,
+          'integrante',
+          base.rows[0].permisos,
+        ]);
+        rolId = Number(creado.rows[0].id);
+        await cliente.query(
+          'UPDATE usuario SET rol_id = $1::smallint WHERE familia_id = $2::bigint AND rol_id = $3::smallint AND activo',
+          [rolId, familiaId, ROL_INTEGRANTE]
+        );
+        await cliente.query(
+          `UPDATE invitacion SET rol_id = $1::smallint
+            WHERE familia_id = $2::bigint AND rol_id = $3::smallint AND estado = 'pendiente'`,
+          [rolId, familiaId, ROL_INTEGRANTE]
+        );
+      }
+
+      const actual = await cliente.query('SELECT permisos FROM rolfamiliar WHERE id = $1::smallint', [rolId]);
+      const lista = new Set<string>(String(actual.rows[0].permisos).split(',').filter(Boolean));
+      if (req.body.permitido) lista.add(clave);
+      else lista.delete(clave);
+
+      // fn_definir_permisos_rol valida que el rol sea de la familia y que cada permiso exista
+      await cliente.query('SELECT fn_definir_permisos_rol($1::bigint, $2::smallint, $3::text)', [
+        usuarioId,
+        rolId,
+        [...lista].join(','),
+      ]);
+    });
     return res.json({ success: true, message: 'Permiso actualizado.' });
   } catch (err: any) {
     return responderError(res, err, 'actualizar el permiso');

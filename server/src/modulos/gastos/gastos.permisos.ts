@@ -8,6 +8,8 @@ export interface PeticionGastos extends Request {
     usuarioId: number;
     familiaId: number;
     esAdmin: boolean;
+    // puede ver el detalle de los gastos de los demás (administrador o permiso gastos.ver_detalle, RF039)
+    verDetalle: boolean;
   };
 }
 
@@ -17,9 +19,10 @@ export interface PeticionGastos extends Request {
 export const cargarContexto = async (req: PeticionGastos, res: Response, next: NextFunction) => {
   try {
     const r = await pool.query(
-      `SELECT u.id, u.familia_id, ro.nombre AS rol
-         FROM usuarios u
-         LEFT JOIN roles ro ON ro.id = u.rol_id
+      `SELECT u.id, u.familia_id, ro.nombre AS rol, ro.familia_id AS rol_familia_id,
+              fn_tiene_permiso(u.id, 'gastos.ver_detalle') AS ver_detalle
+         FROM usuario u
+         LEFT JOIN rolfamiliar ro ON ro.id = u.rol_id
         WHERE u.id = $1::bigint AND u.activo = true`,
       [req.user?.id]
     );
@@ -31,10 +34,13 @@ export const cargarContexto = async (req: PeticionGastos, res: Response, next: N
       return res.status(403).json({ error: 'Primero debes crear una familia o unirte a una.' });
     }
 
+    // el rol base "administrador" es el único con familia_id NULL en rolfamiliar
+    const esAdmin = r.rows[0].rol === 'administrador' && r.rows[0].rol_familia_id === null;
     req.contexto = {
       usuarioId: Number(r.rows[0].id),
       familiaId: Number(r.rows[0].familia_id),
-      esAdmin: r.rows[0].rol === 'administrador',
+      esAdmin,
+      verDetalle: esAdmin || r.rows[0].ver_detalle === true,
     };
     next();
   } catch (err: any) {

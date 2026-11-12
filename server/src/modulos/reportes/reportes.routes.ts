@@ -26,7 +26,7 @@ router.get('/resumen', async (req: PeticionGastos, res: Response) => {
     return res.json({
       success: true,
       periodo: { desde, hasta },
-      alcance_detalle: contexto.esAdmin ? 'familia' : 'personal',
+      alcance_detalle: contexto.verDetalle ? 'familia' : 'personal',
       totales,
       categorias,
       por_mes,
@@ -52,8 +52,8 @@ router.get('/ingresos-egresos', async (req: PeticionGastos, res: Response) => {
   if (req.query.categoria_id && !categoriaId) return res.status(400).json({ error: 'Categoría: no es válida.' });
   const usuarioId = req.query.usuario_id ? leerId(req.query.usuario_id) : null;
   if (req.query.usuario_id && !usuarioId) return res.status(400).json({ error: 'Integrante: no es válido.' });
-  if (usuarioId && usuarioId !== contexto.usuarioId && !contexto.esAdmin) {
-    return res.status(403).json({ error: 'Solo el administrador puede ver el detalle de otros integrantes.' });
+  if (usuarioId && usuarioId !== contexto.usuarioId && !contexto.verDetalle) {
+    return res.status(403).json({ error: 'No tienes permiso para ver el detalle de otros integrantes.' });
   }
 
   try {

@@ -50,12 +50,12 @@ const guardarCategorias = async (
   familiaId: number,
   categorias: { categoria_id: number; monto: number }[]
 ) => {
-  await cliente.query('DELETE FROM presupuesto_categorias WHERE presupuesto_id = $1::bigint', [presupuestoId]);
+  // RNF04_ solo categorías generales o de la propia familia (el trigger de la base también lo valida)
+  // El trigger tg_presupuesto_cat revisa que la suma por categoría no supere el total
   for (const categoria of categorias) {
-    // RNF04_ solo categorías generales o de la propia familia
     const insertada = await cliente.query(
-      `INSERT INTO presupuesto_categorias (presupuesto_id, categoria_id, monto)
-       SELECT $1::bigint, c.id, $3::numeric FROM categorias c
+      `INSERT INTO presupuesto_por_categoria (presupuesto_id, categoria_id, monto_asignado)
+       SELECT $1::bigint, c.id, $3::numeric FROM categoria_de_los_gastos c
         WHERE c.id = $2::bigint AND c.activa AND (c.familia_id IS NULL OR c.familia_id = $4::bigint)`,
       [presupuestoId, categoria.categoria_id, categoria.monto, familiaId]
     );
@@ -73,15 +73,16 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
 });
 
 // RF019_ Creación de presupuesto. RF020_ Asignación por categoría.
-router.post('/', exigirPermiso('presupuestos.gestionar'), async (req: PeticionGastos, res: Response) => {
+router.post('/', exigirPermiso('presupuesto.gestionar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId, familiaId } = req.contexto!;
   const { errores, datos } = validarPresupuesto(req.body);
   if (errores.length > 0) return res.status(400).json({ error: errores.join(' '), errores });
 
   try {
     const id = await enTransaccion(async (cliente) => {
+      // Una familia no puede tener dos presupuestos con fechas traslapadas (restricción de la base de datos)
       const creado = await cliente.query(
-        `INSERT INTO presupuestos (familia_id, nombre, monto_total, desde, hasta, creado_por)
+        `INSERT INTO presupuesto (familia_id, periodo, monto_total, fecha_inicio, fecha_fin, creado_por)
          VALUES ($1::bigint, $2::varchar, $3::numeric, $4::date, $5::date, $6::bigint) RETURNING id`,
         [familiaId, datos.nombre, datos.monto_total, datos.desde, datos.hasta, usuarioId]
       );
@@ -95,7 +96,7 @@ router.post('/', exigirPermiso('presupuestos.gestionar'), async (req: PeticionGa
   }
 });
 
-router.put('/:id', exigirPermiso('presupuestos.gestionar'), async (req: PeticionGastos, res: Response) => {
+router.put('/:id', exigirPermiso('presupuesto.gestionar'), async (req: PeticionGastos, res: Response) => {
   const { familiaId } = req.contexto!;
   const id = leerId(req.params.id);
   if (!id) return res.status(400).json({ error: 'El presupuesto indicado no es válido.' });
@@ -104,12 +105,20 @@ router.put('/:id', exigirPermiso('presupuestos.gestionar'), async (req: Peticion
 
   try {
     await enTransaccion(async (cliente) => {
-      const actualizado = await cliente.query(
-        `UPDATE presupuestos SET nombre = $3::varchar, monto_total = $4::numeric, desde = $5::date, hasta = $6::date
+      // Primero se quitan las categorías anteriores: así el trigger que compara el total con la suma
+      // por categoría no se confunde si el nuevo total es menor al anterior
+      const existe = await cliente.query('SELECT 1 FROM presupuesto WHERE id = $1::bigint AND familia_id = $2::bigint FOR UPDATE', [
+        id,
+        familiaId,
+      ]);
+      if (existe.rows.length === 0) throw new ErrorNegocio(404, 'Presupuesto no encontrado.');
+      await cliente.query('DELETE FROM presupuesto_por_categoria WHERE presupuesto_id = $1::bigint', [id]);
+      await cliente.query(
+        `UPDATE presupuesto SET periodo = $3::varchar, monto_total = $4::numeric,
+                fecha_inicio = $5::date, fecha_fin = $6::date
           WHERE id = $1::bigint AND familia_id = $2::bigint`,
         [id, familiaId, datos.nombre, datos.monto_total, datos.desde, datos.hasta]
       );
-      if (actualizado.rowCount === 0) throw new ErrorNegocio(404, 'Presupuesto no encontrado.');
       await guardarCategorias(cliente, id, familiaId, datos.categorias);
     });
     return res.json({ success: true, message: 'Presupuesto actualizado.' });
@@ -118,11 +127,11 @@ router.put('/:id', exigirPermiso('presupuestos.gestionar'), async (req: Peticion
   }
 });
 
-router.delete('/:id', exigirPermiso('presupuestos.gestionar'), async (req: PeticionGastos, res: Response) => {
+router.delete('/:id', exigirPermiso('presupuesto.gestionar'), async (req: PeticionGastos, res: Response) => {
   const id = leerId(req.params.id);
   if (!id) return res.status(400).json({ error: 'El presupuesto indicado no es válido.' });
   try {
-    const borrado = await pool.query('DELETE FROM presupuestos WHERE id = $1::bigint AND familia_id = $2::bigint', [
+    const borrado = await pool.query('DELETE FROM presupuesto WHERE id = $1::bigint AND familia_id = $2::bigint', [
       id,
       req.contexto!.familiaId,
     ]);

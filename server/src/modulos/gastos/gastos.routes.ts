@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { pool } from '../../db';
 import { PeticionGastos, cargarContexto, exigirPermiso } from './gastos.permisos';
 import { validarGasto, leerPeriodo, leerId } from './gastos.validaciones';
+import { METODOS_PAGO, metodoPorCodigo, metodoPorId } from '../../catalogos';
 
 const router = Router();
 
@@ -29,14 +30,19 @@ router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   try {
     const [categorias, metodos] = await Promise.all([
       pool.query(
-        `SELECT id, nombre FROM categorias
+        `SELECT id, nombre FROM categoria_de_los_gastos
           WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
           ORDER BY nombre`,
         [familiaId]
       ),
-      pool.query('SELECT id, nombre, es_credito FROM metodos_pago ORDER BY id'),
+      // los métodos de pago son valores fijos de la base de datos (CHECK en gastos.metodo_de_pago)
+      Promise.resolve(METODOS_PAGO.map(({ id, nombre, es_credito }) => ({ id, nombre, es_credito }))),
     ]);
-    return res.json({ success: true, categorias: categorias.rows, metodos_pago: metodos.rows });
+    return res.json({
+      success: true,
+      categorias: categorias.rows.map((c: any) => ({ id: Number(c.id), nombre: c.nombre })),
+      metodos_pago: metodos,
+    });
   } catch (err: any) {
     return responderError(res, err, 'consultar catálogos');
   }
@@ -50,14 +56,16 @@ router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, 
   if (errores.length > 0) {
     return res.status(400).json({ error: errores.join(' '), errores });
   }
+  const metodo = metodoPorId(datos.metodo_pago_id);
+  if (!metodo) return res.status(400).json({ error: 'Selecciona un método de pago válido.' });
 
   try {
     const r = await pool.query(
-      `INSERT INTO gastos (familia_id, usuario_id, categoria_id, metodo_pago_id, monto, fecha, descripcion)
-       VALUES ($1::bigint, $2::bigint, $3::bigint, $4::smallint, $5::numeric,
+      `INSERT INTO gastos (familia_id, usuario_id, categoria_id, metodo_de_pago, monto, fecha, descripcion)
+       VALUES ($1::bigint, $2::bigint, $3::bigint, $4::text, $5::numeric,
                COALESCE($6::date, current_date), $7)
        RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
-      [familiaId, usuarioId, datos.categoria_id, datos.metodo_pago_id, datos.monto, datos.fecha, datos.descripcion]
+      [familiaId, usuarioId, datos.categoria_id, metodo.codigo, datos.monto, datos.fecha, datos.descripcion]
     );
     return res.status(201).json({ success: true, message: 'Gasto registrado con éxito.', gasto: r.rows[0] });
   } catch (err: any) {
@@ -76,6 +84,8 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
   if (errores.length > 0) {
     return res.status(400).json({ error: errores.join(' '), errores });
   }
+  const metodo = metodoPorId(datos.metodo_pago_id);
+  if (!metodo) return res.status(400).json({ error: 'Selecciona un método de pago válido.' });
 
   try {
     const gasto = await pool.query(
@@ -91,11 +101,11 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
 
     const r = await pool.query(
       `UPDATE gastos
-          SET categoria_id = $3::bigint, metodo_pago_id = $4::smallint, monto = $5::numeric,
+          SET categoria_id = $3::bigint, metodo_de_pago = $4::text, monto = $5::numeric,
               fecha = COALESCE($6::date, fecha), descripcion = $7
         WHERE id = $1::bigint AND familia_id = $2::bigint
         RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
-      [id, familiaId, datos.categoria_id, datos.metodo_pago_id, datos.monto, datos.fecha, datos.descripcion]
+      [id, familiaId, datos.categoria_id, metodo.codigo, datos.monto, datos.fecha, datos.descripcion]
     );
     return res.json({ success: true, message: 'Gasto actualizado.', gasto: r.rows[0] });
   } catch (err: any) {
@@ -132,7 +142,7 @@ router.delete('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos
 // administrador: todos los gastos de la familia (puede filtrar por integrante)
 // integrante: solo sus propios gastos
 router.get('/', async (req: PeticionGastos, res: Response) => {
-  const { usuarioId, familiaId, esAdmin } = req.contexto!;
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
 
   const periodo = leerPeriodo(req.query);
   if (periodo.error) return res.status(400).json({ error: periodo.error });
@@ -149,10 +159,10 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
     return res.status(400).json({ error: 'El integrante indicado no es válido.' });
   }
 
-  if (!esAdmin) {
-    // el integrante no puede ver el detalle de los demas
+  if (!verDetalle) {
+    // sin el permiso gastos.ver_detalle no se ve el detalle de los demas
     if (usuarioFiltro && usuarioFiltro !== usuarioId) {
-      return res.status(403).json({ error: 'Solo el administrador puede ver el detalle de otros integrantes.' });
+      return res.status(403).json({ error: 'No tienes permiso para ver el detalle de otros integrantes.' });
     }
     valores.push(usuarioId);
     filtros.push(`g.usuario_id = $${valores.length}::bigint`);
@@ -177,12 +187,11 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
       pool.query(
         `SELECT g.id, to_char(g.fecha, 'YYYY-MM-DD') AS fecha, g.monto, g.descripcion,
                 g.categoria_id, c.nombre AS categoria,
-                g.metodo_pago_id, mp.nombre AS metodo_pago,
+                g.metodo_de_pago,
                 g.usuario_id, u.nombre AS integrante
            FROM gastos g
-           JOIN categorias c ON c.id = g.categoria_id
-           JOIN metodos_pago mp ON mp.id = g.metodo_pago_id
-           JOIN usuarios u ON u.id = g.usuario_id
+           JOIN categoria_de_los_gastos c ON c.id = g.categoria_id
+           JOIN usuario u ON u.id = g.usuario_id
           WHERE ${where}
           ORDER BY g.fecha DESC, g.id DESC
           LIMIT ${limite} OFFSET ${(pagina - 1) * limite}`,
@@ -193,15 +202,23 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
     return res.json({
       success: true,
       periodo: { desde: periodo.desde, hasta: periodo.hasta },
-      alcance: esAdmin ? 'familia' : 'personal',
+      alcance: verDetalle ? 'familia' : 'personal',
       total: totales.rows[0].total,
       cantidad: Number(totales.rows[0].cantidad),
       pagina,
       limite,
-      gastos: filas.rows.map((gasto: any) => ({
-        ...gasto,
-        es_mio: Number(gasto.usuario_id) === usuarioId,
-      })),
+      gastos: filas.rows.map(({ metodo_de_pago, ...gasto }: any) => {
+        const metodo = metodoPorCodigo(metodo_de_pago);
+        return {
+          ...gasto,
+          id: Number(gasto.id),
+          categoria_id: Number(gasto.categoria_id),
+          metodo_pago_id: metodo?.id ?? null,
+          metodo_pago: metodo?.nombre ?? metodo_de_pago,
+          usuario_id: Number(gasto.usuario_id),
+          es_mio: Number(gasto.usuario_id) === usuarioId,
+        };
+      }),
     });
   } catch (err: any) {
     return responderError(res, err, 'consultar los gastos');
@@ -212,7 +229,7 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
 // los dos roles ven el total general de la familia y el total propio
 // solo el administrador ve cuanto gastó cada integrante
 router.get('/resumen', exigirPermiso('reportes.ver'), async (req: PeticionGastos, res: Response) => {
-  const { usuarioId, familiaId, esAdmin } = req.contexto!;
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
 
   const periodo = leerPeriodo(req.query);
   if (periodo.error) return res.status(400).json({ error: periodo.error });
@@ -236,10 +253,10 @@ router.get('/resumen', exigirPermiso('reportes.ver'), async (req: PeticionGastos
       mio: { total: t.total_mio, cantidad: Number(t.cantidad_mio) },
     };
 
-    if (esAdmin) {
+    if (verDetalle) {
       const porIntegrante = await pool.query(
         `SELECT u.id, u.nombre, sum(g.monto) AS total, count(*) AS cantidad
-           FROM gastos g JOIN usuarios u ON u.id = g.usuario_id
+           FROM gastos g JOIN usuario u ON u.id = g.usuario_id
           WHERE g.familia_id = $1::bigint AND g.fecha BETWEEN $2::date AND $3::date
           GROUP BY u.id, u.nombre
           ORDER BY sum(g.monto) DESC`,
@@ -259,7 +276,7 @@ router.get('/resumen', exigirPermiso('reportes.ver'), async (req: PeticionGastos
 // alcance=mio: solo mis gastos
 // usuario_id=X: solo lo puede usar el administrador para ver a un integrante
 router.get('/por-categoria', exigirPermiso('reportes.ver'), async (req: PeticionGastos, res: Response) => {
-  const { usuarioId, familiaId, esAdmin } = req.contexto!;
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
 
   const periodo = leerPeriodo(req.query);
   if (periodo.error) return res.status(400).json({ error: periodo.error });
@@ -268,8 +285,8 @@ router.get('/por-categoria', exigirPermiso('reportes.ver'), async (req: Peticion
   if (req.query.usuario_id && !usuarioFiltro) {
     return res.status(400).json({ error: 'El integrante indicado no es válido.' });
   }
-  if (!esAdmin && usuarioFiltro && usuarioFiltro !== usuarioId) {
-    return res.status(403).json({ error: 'Solo el administrador puede ver el detalle de otros integrantes.' });
+  if (!verDetalle && usuarioFiltro && usuarioFiltro !== usuarioId) {
+    return res.status(403).json({ error: 'No tienes permiso para ver el detalle de otros integrantes.' });
   }
 
   // si piden "mio" o un integrante en especifico, se filtra por usuario
@@ -287,7 +304,7 @@ router.get('/por-categoria', exigirPermiso('reportes.ver'), async (req: Peticion
       filas = await pool.query(
         `SELECT c.id AS categoria_id, c.nombre AS categoria, sum(g.monto) AS total,
                 round(100 * sum(g.monto) / NULLIF(sum(sum(g.monto)) OVER (), 0), 2) AS porcentaje
-           FROM gastos g JOIN categorias c ON c.id = g.categoria_id
+           FROM gastos g JOIN categoria_de_los_gastos c ON c.id = g.categoria_id
           WHERE g.familia_id = $1::bigint AND g.usuario_id = $4::bigint
             AND g.fecha BETWEEN $2::date AND $3::date
           GROUP BY c.id, c.nombre

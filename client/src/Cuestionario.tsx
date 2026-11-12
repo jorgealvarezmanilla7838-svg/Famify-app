@@ -92,18 +92,20 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
           setDiasIngreso(conf.dias_ingreso ?? []);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           setMetodosSel([...new Set<number>(actual.metodos_pago.map((m: any) => Number(m.metodo_pago_id)))]);
+          // la base de datos guarda una sola tarjeta de crédito por usuario
           setTarjetas(
             actual.metodos_pago
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               .filter((m: any) => m.dia_corte !== null)
+              .slice(0, 1)
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              .map((m: any) => ({ alias: m.alias, dia_corte: String(m.dia_corte), dia_limite_pago: String(m.dia_limite_pago) }))
+              .map((m: any) => ({ alias: m.alias ?? 'Principal', dia_corte: String(m.dia_corte), dia_limite_pago: String(m.dia_limite_pago) }))
           );
           setGastos(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             actual.gastos_fijos.map((g: any) => ({
               descripcion: g.descripcion,
-              categoria_id: String(g.categoria_id),
+              categoria_id: g.categoria_id === undefined || g.categoria_id === null ? '' : String(g.categoria_id),
               monto: String(g.monto),
               dia_pago: String(g.dia_pago),
               dias_aviso: String(g.dias_aviso),
@@ -164,11 +166,10 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
       e.push('Selecciona al menos un método de pago.');
     }
     if (p === 'tarjetas') {
-      if (tarjetas.length === 0) e.push('Agrega al menos una tarjeta de crédito.');
-      tarjetas.forEach((t, i) => {
-        if (t.alias.trim().length > 50) e.push(`Tarjeta ${i + 1}: el alias admite hasta 50 caracteres.`);
-        if (!diaValido(t.dia_corte)) e.push(`Tarjeta ${i + 1}: el día de corte debe ser un número del 1 al 31.`);
-        if (!diaValido(t.dia_limite_pago)) e.push(`Tarjeta ${i + 1}: el día límite de pago debe ser un número del 1 al 31.`);
+      if (tarjetas.length === 0) e.push('Escribe el día de corte y el día límite de pago de tu tarjeta de crédito.');
+      tarjetas.slice(0, 1).forEach((t) => {
+        if (!diaValido(t.dia_corte)) e.push('El día de corte debe ser un número del 1 al 31.');
+        if (!diaValido(t.dia_limite_pago)) e.push('El día límite de pago debe ser un número del 1 al 31.');
       });
     }
     if (p === 'gastos') {
@@ -194,9 +195,9 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
       metodos_pago: [
         ...sinCredito.map((id) => ({ metodo_pago_id: id })),
         ...(usaCredito && metodoCredito
-          ? tarjetas.map((t, i) => ({
+          ? tarjetas.slice(0, 1).map((t) => ({
               metodo_pago_id: metodoCredito.id,
-              alias: t.alias.trim() || (i === 0 ? 'Principal' : `Tarjeta ${i + 1}`),
+              alias: 'Principal',
               dia_corte: Number(t.dia_corte),
               dia_limite_pago: Number(t.dia_limite_pago),
             }))
@@ -253,7 +254,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
   const titulos: Record<Paso, string> = {
     ingresos: 'Tus ingresos',
     metodos: 'Métodos de pago',
-    tarjetas: 'Tarjetas de crédito',
+    tarjetas: 'Tarjeta de crédito',
     gastos: 'Gastos fijos',
   };
 
@@ -398,7 +399,7 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
         </div>
       )}
 
-      {/* RF07: día de corte y fecha límite de pago de cada tarjeta de crédito */}
+      {/* RF07: día de corte y fecha límite de pago de la tarjeta de crédito */}
       {paso === 'tarjetas' && (
         <div className="cuestionario-seccion">
           <p className="cuestionario-nota">
@@ -406,18 +407,6 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
           </p>
           {tarjetas.map((t, i) => (
             <div key={i} className="fila-tarjeta">
-              <div className="form-group">
-                <label htmlFor={`alias-${i}`}>Nombre para identificarla (no escribas el número de tarjeta)</label>
-                <input
-                  id={`alias-${i}`}
-                  type="text"
-                  maxLength={50}
-                  className="form-input"
-                  placeholder="Ej. Tarjeta azul"
-                  value={t.alias}
-                  onChange={(e) => cambiarTarjeta(i, 'alias', e.target.value)}
-                />
-              </div>
               <div className="fila-dos">
                 <div className="form-group">
                   <label htmlFor={`corte-${i}`}>Día de corte</label>
@@ -446,18 +435,8 @@ export const Cuestionario: FC<Props> = ({ nombre, onCompletado, edicion = false 
                   />
                 </div>
               </div>
-              {tarjetas.length > 1 && (
-                <button type="button" className="btn-link-chico" onClick={() => setTarjetas(tarjetas.filter((_, k) => k !== i))}>
-                  Quitar esta tarjeta
-                </button>
-              )}
             </div>
           ))}
-          <div className="atajos">
-            <button type="button" className="chip" onClick={() => setTarjetas([...tarjetas, tarjetaVacia()])}>
-              + Otra tarjeta
-            </button>
-          </div>
         </div>
       )}
 

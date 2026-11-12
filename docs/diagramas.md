@@ -2,40 +2,41 @@
 
 ## Entidad-relación
 
+Corresponde al script oficial de la base de datos (`famify_db.sql`), que no se modifica.
+
 ```mermaid
 erDiagram
-  FAMILIAS ||--o{ USUARIOS : agrupa
-  ROLES ||--o{ USUARIOS : asigna
-  ROLES ||--o{ ROL_PERMISOS : define
-  PERMISOS ||--o{ ROL_PERMISOS : incluye
-  FAMILIAS ||--o{ FAMILIA_ROL_PERMISOS : personaliza
-  PERMISOS ||--o{ FAMILIA_ROL_PERMISOS : ajusta
-  FAMILIAS ||--o{ INVITACIONES : emite
-  USUARIOS ||--o{ SESIONES : abre
-  USUARIOS ||--o{ USUARIO_METODOS_PAGO : configura
-  METODOS_PAGO ||--o{ USUARIO_METODOS_PAGO : tipo
-  USUARIOS ||--o{ INGRESOS : recibe
-  USUARIOS ||--o{ GASTOS : registra
-  FAMILIAS ||--o{ GASTOS : acumula
-  CATEGORIAS ||--o{ GASTOS : clasifica
-  METODOS_PAGO ||--o{ GASTOS : paga
-  USUARIOS ||--o{ GASTOS_FIJOS : programa
-  CATEGORIAS ||--o{ GASTOS_FIJOS : clasifica
-  FAMILIAS ||--o{ PRESUPUESTOS : establece
-  PRESUPUESTOS ||--o{ PRESUPUESTO_CATEGORIAS : reparte
-  CATEGORIAS ||--o{ PRESUPUESTO_CATEGORIAS : limita
-  FAMILIAS ||--o{ METAS_AHORRO : define
-  USUARIOS |o--o{ METAS_AHORRO : "meta personal"
-  METAS_AHORRO ||--o{ APORTACIONES_META : recibe
-  USUARIOS ||--o{ APORTACIONES_META : aporta
-  USUARIOS ||--o{ NOTIFICACIONES : recibe
+  FAMILIA ||--o{ USUARIO : agrupa
+  ROLFAMILIAR ||--o{ USUARIO : asigna
+  FAMILIA |o--o{ ROLFAMILIAR : "roles propios"
+  FAMILIA ||--o{ INVITACION : emite
+  ROLFAMILIAR ||--o{ INVITACION : otorga
+  USUARIO ||--o| CONFIGURACION_FINANCIERA : configura
+  USUARIO ||--o{ INGRESOS : recibe
+  FAMILIA ||--o{ INGRESOS : acumula
+  USUARIO ||--o{ GASTOS : registra
+  FAMILIA ||--o{ GASTOS : acumula
+  CATEGORIA_DE_LOS_GASTOS ||--o{ GASTOS : clasifica
+  FAMILIA ||--o{ PRESUPUESTO : establece
+  PRESUPUESTO ||--o{ PRESUPUESTO_POR_CATEGORIA : reparte
+  CATEGORIA_DE_LOS_GASTOS ||--o{ PRESUPUESTO_POR_CATEGORIA : limita
+  FAMILIA ||--o{ META_DE_AHORRO : define
+  USUARIO |o--o{ META_DE_AHORRO : "meta personal"
+  META_DE_AHORRO ||--o{ APORTACION : recibe
+  USUARIO ||--o{ APORTACION : aporta
+  USUARIO ||--o{ NOTIFICACION : recibe
+  USUARIO ||--o{ RECORDATORIO : programa
+  FAMILIA ||--o{ RESUMEN_FINANCIERO : resume
+  FAMILIA ||--o{ REPORTE : guarda
 ```
 
 Notas:
 
-- `metas_ahorro.usuario_id` nulo indica una meta de toda la familia.
-- `ingresos.usuario_id` es texto y se relaciona con `usuarios.id` mediante una conversión.
-- `familia_rol_permisos` guarda los cambios de cada familia sobre los permisos por defecto de `rol_permisos`.
+- `meta_de_ahorro.usuario_id` nulo indica una meta de toda la familia; `actual` y `estado` los mantienen triggers a partir de `aportacion`.
+- Los permisos de cada rol son una lista separada por comas en `rolfamiliar.permisos`. Los roles base (`familia_id` nulo) no se editan: al cambiar permisos, la familia recibe su propio rol `integrante`.
+- Los métodos de pago, la tarjeta de crédito (día de corte y fecha límite) y los gastos fijos viven en `configuracion_financiera`.
+- La sesión se controla con `usuario.version_token` y `usuario.ultima_actividad` (`fn_iniciar_sesion`, `fn_validar_sesion`, `fn_cerrar_sesion`).
+- Los avisos de corte, pago y gastos fijos los programa `fn_generar_recordatorios`; los de presupuesto y déficit, los triggers de `gastos` e `ingresos`.
 
 ## Clases y módulos del servidor
 

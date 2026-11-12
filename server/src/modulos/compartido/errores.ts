@@ -20,6 +20,9 @@ export const responderError = (res: Response, err: any, accion: string) => {
   if (err.code === '42501') {
     return res.status(403).json({ error: 'No tienes permiso para realizar esta acción.' });
   }
+  if (err.code === '23P01') {
+    return res.status(409).json({ error: 'Las fechas se traslapan con otro presupuesto de tu familia. Elige un periodo distinto.' });
+  }
   if (err.code === '23505') {
     return res.status(409).json({ error: 'Ya existe un registro con esos datos.' });
   }

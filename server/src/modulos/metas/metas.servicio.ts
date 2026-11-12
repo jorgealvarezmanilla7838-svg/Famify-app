@@ -9,12 +9,13 @@ export interface ContextoMetas {
 // RF025_ / RF031_ Metas visibles: las familiares, las propias y, para el administrador, todas
 export const listarMetas = async ({ usuarioId, familiaId, esAdmin }: ContextoMetas) => {
   const metas = await pool.query(
-    `SELECT m.id, m.nombre, m.descripcion, m.monto_objetivo, m.monto_ahorrado,
+    // meta_de_ahorro.actual lo mantienen los triggers de la base a partir de las aportaciones
+    `SELECT m.id, m.nombre, m.descripcion, m.objetivo AS monto_objetivo, m.actual AS monto_ahorrado,
             to_char(m.fecha_limite, 'YYYY-MM-DD') AS fecha_limite,
             m.usuario_id, m.creada_por, u.nombre AS integrante
-       FROM metas_ahorro m
-       LEFT JOIN usuarios u ON u.id = m.usuario_id
-      WHERE m.familia_id = $1::bigint
+       FROM meta_de_ahorro m
+       LEFT JOIN usuario u ON u.id = m.usuario_id
+      WHERE m.familia_id = $1::bigint AND m.estado <> 'cancelada'
         AND ($2::boolean OR m.usuario_id IS NULL OR m.usuario_id = $3::bigint)
       ORDER BY m.created_at DESC, m.id DESC`,
     [familiaId, esAdmin, usuarioId]

@@ -4,6 +4,8 @@ import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 import { enTransaccion, pool } from '../../db';
 import { responderError, textoRecortado } from '../compartido/errores';
+import { CLAVES_PERMISO } from '../compartido/permisos';
+import { ROL_ADMIN, ROL_INTEGRANTE, rolIntegranteDeFamilia } from '../compartido/roles';
 import { type AuthRequest, secretoJwt, verificarToken } from './auth.middleware';
 
 const router = Router();
@@ -35,11 +37,11 @@ const usuarioPublico = (fila: any): UsuarioPublico => ({
   perfil_completo: Boolean(fila.perfil_completo),
 });
 
-// RNF05_ Cada inicio de sesión abre una sesión propia que se puede invalidar.
-// Los 30 minutos de inactividad se controlan en verificarToken.
+// RNF05_ fn_iniciar_sesion marca la actividad y devuelve la versión que debe llevar el token.
+// Los 30 minutos de inactividad se controlan en verificarToken (fn_validar_sesion).
 const abrirSesion = async (usuario: UsuarioPublico) => {
-  const sesion = await pool.query('INSERT INTO sesiones (usuario_id) VALUES ($1::bigint) RETURNING id', [usuario.id]);
-  return jwt.sign({ id: usuario.id, sid: sesion.rows[0].id }, secretoJwt(), { expiresIn: '12h' });
+  const sesion = await pool.query('SELECT fn_iniciar_sesion($1::bigint) AS version', [usuario.id]);
+  return jwt.sign({ id: usuario.id, v: Number(sesion.rows[0].version) }, secretoJwt(), { expiresIn: '12h' });
 };
 
 // RF01_ Registro. RNF31_ exige aceptar el aviso de privacidad. RNF01_ guarda solo el hash.
@@ -56,13 +58,13 @@ router.post('/register', async (req: Request, res: Response) => {
   if (errores.length > 0) return res.status(400).json({ error: errores.join(' '), errores });
 
   try {
-    const existente = await pool.query('SELECT 1 FROM usuarios WHERE lower(email) = lower($1)', [email]);
+    const existente = await pool.query('SELECT 1 FROM usuario WHERE lower(email) = lower($1)', [email]);
     if (existente.rows.length > 0) {
       return res.status(409).json({ error: 'El correo electrónico ya está registrado.' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
     const resultado = await pool.query(
-      `INSERT INTO usuarios (nombre, email, password_hash, aviso_privacidad_aceptado_en)
+      `INSERT INTO usuario (nombre, email, contrasena, aviso_privacidad_aceptado_en)
        VALUES ($1::varchar, $2::varchar, $3::varchar, now())
        RETURNING id, nombre, email, rol_id, familia_id, perfil_completo`,
       [nombre, email, passwordHash]
@@ -89,12 +91,12 @@ router.post('/login', async (req: Request, res: Response) => {
 
   try {
     const resultado = await pool.query(
-      `SELECT id, nombre, email, password_hash, rol_id, familia_id, perfil_completo, activo
-         FROM usuarios WHERE lower(email) = lower($1)`,
+      `SELECT id, nombre, email, contrasena, rol_id, familia_id, perfil_completo, activo
+         FROM usuario WHERE lower(email) = lower($1)`,
       [email]
     );
     const fila = resultado.rows[0];
-    if (!fila || !fila.activo || !(await bcrypt.compare(password, fila.password_hash))) {
+    if (!fila || !fila.activo || !(await bcrypt.compare(password, fila.contrasena))) {
       return res.status(400).json({ error: 'Correo o contraseña incorrectos.' });
     }
     const usuario = usuarioPublico(fila);
@@ -115,10 +117,14 @@ router.get('/me', verificarToken, async (req: AuthRequest, res: Response) => {
     const [usuario, permisos] = await Promise.all([
       pool.query(
         `SELECT id, nombre, email, rol_id, familia_id, perfil_completo
-           FROM usuarios WHERE id = $1::bigint AND activo`,
+           FROM usuario WHERE id = $1::bigint AND activo`,
         [req.user!.id]
       ),
-      pool.query('SELECT clave FROM permisos WHERE fn_tiene_permiso($1::bigint, clave)', [req.user!.id]),
+      // fn_tiene_permiso ya toma en cuenta el rol y si el usuario recibe sueldo (RF05)
+      pool.query('SELECT clave FROM unnest($2::text[]) AS clave WHERE fn_tiene_permiso($1::bigint, clave)', [
+        req.user!.id,
+        CLAVES_PERMISO,
+      ]),
     ]);
     if (usuario.rows.length === 0) return res.status(401).json({ error: 'Usuario no válido.' });
     return res.json({
@@ -134,7 +140,7 @@ router.get('/me', verificarToken, async (req: AuthRequest, res: Response) => {
 // RNF05_ Al cerrar sesión el token deja de servir de inmediato
 router.post('/logout', verificarToken, async (req: AuthRequest, res: Response) => {
   try {
-    await pool.query('UPDATE sesiones SET cerrada_en = now() WHERE id = $1::uuid', [req.user!.sid]);
+    await pool.query('SELECT fn_cerrar_sesion($1::bigint)', [req.user!.id]);
     return res.json({ success: true, message: 'Sesión cerrada correctamente.' });
   } catch (err: any) {
     return responderError(res, err, 'cerrar la sesión');
@@ -156,7 +162,7 @@ router.post('/crear-familia', verificarToken, async (req: AuthRequest, res: Resp
       ]);
       const invitacion = await cliente.query(
         'SELECT fn_crear_invitacion($1::bigint, $2::smallint, NULL::text) AS codigo_invitacion',
-        [req.user!.id, 2]
+        [req.user!.id, ROL_INTEGRANTE]
       );
       return {
         id: creada.rows[0].familia_id,
@@ -174,7 +180,7 @@ router.post('/crear-familia', verificarToken, async (req: AuthRequest, res: Resp
 router.post('/generar-invitacion', verificarToken, async (req: AuthRequest, res: Response) => {
   const rolId = Number(req.body?.rol_id);
   const emailInvitado = textoRecortado(req.body?.email_invitado).toLowerCase();
-  if (![1, 2].includes(rolId)) {
+  if (![ROL_ADMIN, ROL_INTEGRANTE].includes(rolId)) {
     return res.status(400).json({ error: 'Rol: selecciona un rol válido para la invitación.' });
   }
   if (emailInvitado && (emailInvitado.length > 254 || !CORREO_VALIDO.test(emailInvitado))) {
@@ -182,9 +188,16 @@ router.post('/generar-invitacion', verificarToken, async (req: AuthRequest, res:
   }
 
   try {
+    // Si la familia personalizó los permisos de sus integrantes, el invitado recibe ese rol (RF039)
+    let rolAsignado = rolId;
+    if (rolId === ROL_INTEGRANTE) {
+      const admin = await pool.query('SELECT familia_id FROM usuario WHERE id = $1::bigint', [req.user!.id]);
+      const familiaId = admin.rows[0]?.familia_id;
+      if (familiaId) rolAsignado = await rolIntegranteDeFamilia(pool, Number(familiaId));
+    }
     const resultado = await pool.query(
       'SELECT fn_crear_invitacion($1::bigint, $2::smallint, $3::text) AS codigo_invitacion',
-      [req.user!.id, rolId, emailInvitado || null]
+      [req.user!.id, rolAsignado, emailInvitado || null]
     );
     const codigo = resultado.rows[0].codigo_invitacion as string;
     const enlace = `${urlCliente()}/?codigo=${encodeURIComponent(codigo)}`;
@@ -229,8 +242,8 @@ router.post('/unirse-familia', verificarToken, async (req: AuthRequest, res: Res
       req.user!.id,
     ]);
     const [familia, usuario] = await Promise.all([
-      pool.query('SELECT id, nombre FROM familias WHERE id = $1::bigint', [resultado.rows[0].familia_id]),
-      pool.query('SELECT rol_id FROM usuarios WHERE id = $1::bigint', [req.user!.id]),
+      pool.query('SELECT id, nombre FROM familia WHERE id = $1::bigint', [resultado.rows[0].familia_id]),
+      pool.query('SELECT rol_id FROM usuario WHERE id = $1::bigint', [req.user!.id]),
     ]);
     return res.json({
       success: true,

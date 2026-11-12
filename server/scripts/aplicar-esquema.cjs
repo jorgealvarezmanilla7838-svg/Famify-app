@@ -1,11 +1,15 @@
-// Aplica famify_db.sql a la base configurada en server/.env.
-// El archivo solo agrega lo que falta, así que se puede ejecutar sobre una base con datos.
+// Aplica el script oficial famify_db.sql a la base configurada en server/.env.
+// El script oficial se corre UNA sola vez sobre una base vacía: si ya existe la tabla "usuario", no hace nada.
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 const { Client } = require('pg');
 
 (async () => {
+  const archivo = path.resolve(__dirname, '../../famify_db.sql');
+  if (!fs.existsSync(archivo)) {
+    throw new Error('No se encontró famify_db.sql en la carpeta del proyecto. Coloca ahí el script oficial.');
+  }
   const client = new Client({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
@@ -15,7 +19,12 @@ const { Client } = require('pg');
   });
   await client.connect();
   try {
-    await client.query(fs.readFileSync(path.resolve(__dirname, '../../famify_db.sql'), 'utf8'));
+    const existe = await client.query("SELECT to_regclass('public.usuario') AS tabla");
+    if (existe.rows[0].tabla) {
+      console.log('La base ya tiene el esquema oficial (tabla usuario). No se aplicó nada.');
+      return;
+    }
+    await client.query(fs.readFileSync(archivo, 'utf8'));
     console.log('Esquema aplicado correctamente.');
   } finally {
     await client.end();
