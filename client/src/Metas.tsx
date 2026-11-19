@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
 import { pedir } from './api';
-import { Avisos, Barra, Encabezado, useAvisos } from './Comunes';
+import { Avisos, Barra, CampoFecha, Encabezado, useAvisos } from './Comunes';
 import { fechaVisible, moneda } from './formato';
 
 // Metas de ahorro (RF023 a RF026)
@@ -117,7 +117,7 @@ export const Metas: FC<{ permisos: string[]; esAdmin: boolean }> = ({ permisos, 
             </label>
             <label>
               Fecha límite (opcional)
-              <input type="date" value={formulario.fecha_limite} onChange={(e) => setFormulario({ ...formulario, fecha_limite: e.target.value })} />
+              <CampoFecha value={formulario.fecha_limite} onChange={(valor) => setFormulario({ ...formulario, fecha_limite: valor })} />
             </label>
             {!editando && (
               <label>

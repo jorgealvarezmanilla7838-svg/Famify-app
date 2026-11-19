@@ -451,3 +451,28 @@
   .modulo-periodos,
   .modulo-acciones-formulario { display: none; }
 }
+
+/* RNF23: campo de fecha con formato DD/MM/AAAA */
+.campo-fecha { position: relative; display: flex; align-items: stretch; gap: 6px; }
+.campo-fecha > input[type='text'] { flex: 1; min-width: 0; }
+.campo-fecha-boton {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 40px; padding: 0 8px; cursor: pointer;
+  border: 1px solid #c9ced6; border-radius: 6px; background: #ffffff; color: #1f2933;
+}
+.campo-fecha-boton:hover { background: #eef1f4; }
+.campo-fecha .campo-fecha-nativo {
+  position: absolute; right: 0; bottom: 0; width: 1px; height: 1px;
+  padding: 0; border: 0; opacity: 0; pointer-events: none;
+}
+.campo-fecha input[aria-invalid='true'] { border-color: #b3261e; outline: 2px solid #b3261e; }
+
+/* RNF22: enlace para saltar la navegación, foco visible y respeto a "reducir movimiento" */
+.saltar-contenido {
+  position: absolute; left: 8px; top: -48px; z-index: 100;
+  padding: 10px 14px; border-radius: 6px; background: #14532d; color: #ffffff; text-decoration: none;
+}
+.saltar-contenido:focus { top: 8px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

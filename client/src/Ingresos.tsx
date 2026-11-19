@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
 import { ErrorApi, pedir } from './api';
+import { CampoFecha } from './Comunes';
 import { fechaVisible, moneda as formatoMoneda } from './formato';
 
 type TipoIngreso = 'salario' | 'tanda' | 'prestamo' | 'otro';
@@ -232,13 +233,7 @@ export const Ingresos: FC<{ permisos: string[] }> = ({ permisos }) => {
           </label>
           <label>
             Fecha recibida
-            <input
-              type="date"
-              max={hoyLocal()}
-              required
-              value={formulario.fecha}
-              onChange={(event) => setFormulario({ ...formulario, fecha: event.target.value })}
-            />
+            <CampoFecha max={hoyLocal()} value={formulario.fecha} onChange={(valor) => setFormulario({ ...formulario, fecha: valor })} />
           </label>
         </div>
         <div className="modulo-acciones-formulario">
@@ -265,28 +260,28 @@ export const Ingresos: FC<{ permisos: string[] }> = ({ permisos }) => {
           <h4>Ingresos por periodo</h4>
           <label>
             Desde
-            <input
-              type="date"
+            <CampoFecha
+              filtro
               value={desde}
               max={hasta}
-              onChange={(event) => {
+              onChange={(valor) => {
                 setError('');
                 setCargando(true);
-                setDesde(event.target.value);
+                setDesde(valor);
               }}
             />
           </label>
           <label>
             Hasta
-            <input
-              type="date"
+            <CampoFecha
+              filtro
               value={hasta}
               min={desde}
               max={hoyLocal()}
-              onChange={(event) => {
+              onChange={(valor) => {
                 setError('');
                 setCargando(true);
-                setHasta(event.target.value);
+                setHasta(valor);
               }}
             />
           </label>

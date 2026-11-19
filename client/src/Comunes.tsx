@@ -1,4 +1,4 @@
-import { useCallback, useState, type FC } from 'react';
+import { useCallback, useEffect, useRef, useState, type FC } from 'react';
 import { mensajesDe } from './api';
 import { hoy, inicioAnio, inicioMes, inicioSemana } from './formato';
 
@@ -35,6 +35,97 @@ export const Avisos: FC<{ errores: string[]; aviso: string }> = ({ errores, avis
   </>
 );
 
+// RNF23_ Las fechas se escriben y se muestran siempre como DD/MM/AAAA.
+// El <input type="date"> del navegador usa el formato del idioma del sistema, por eso aquí se usa
+// un campo de texto con máscara. El valor que recibe y entrega el componente sigue siendo AAAA-MM-DD.
+const FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+const isoATexto = (iso: string) => (FECHA_ISO.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '');
+const textoAIso = (texto: string) => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(texto);
+  if (!m) return null;
+  const [dia, mes, anio] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const f = new Date(anio, mes - 1, dia);
+  const existe = f.getFullYear() === anio && f.getMonth() === mes - 1 && f.getDate() === dia;
+  return existe ? `${m[3]}-${m[2]}-${m[1]}` : null;
+};
+
+interface CampoFechaProps {
+  value: string;
+  onChange: (valor: string) => void;
+  min?: string;
+  max?: string;
+  ariaLabel?: string;
+  // En filtros solo se avisa al resto de la pantalla cuando la fecha está completa y es real
+  filtro?: boolean;
+}
+
+export const CampoFecha: FC<CampoFechaProps> = ({ value, onChange, min, max, ariaLabel, filtro }) => {
+  const [texto, setTexto] = useState(() => isoATexto(value));
+  const calendario = useRef<HTMLInputElement>(null);
+
+  // Si la pantalla cambia la fecha (por ejemplo con "Esta semana"), el texto se actualiza
+  useEffect(() => {
+    if (value !== '' && !FECHA_ISO.test(value)) return;
+    setTexto((actual) => (textoAIso(actual) === value ? actual : isoATexto(value)));
+  }, [value]);
+
+  const cambiar = (nuevo: string) => {
+    const d = nuevo.replace(/\D/g, '').slice(0, 8);
+    const formateado = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+    setTexto(formateado);
+    const iso = textoAIso(formateado);
+    if (iso) onChange(iso);
+    else if (formateado === '') onChange('');
+    else if (!filtro) onChange(formateado); // el servidor la rechaza con un mensaje claro
+  };
+
+  const abrirCalendario = () => {
+    try {
+      calendario.current?.showPicker();
+    } catch {
+      calendario.current?.focus();
+    }
+  };
+
+  const incompleta = texto.length === 10 && textoAIso(texto) === null;
+  return (
+    <span className="campo-fecha">
+      <input
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        placeholder="DD/MM/AAAA"
+        maxLength={10}
+        value={texto}
+        aria-label={ariaLabel}
+        aria-invalid={incompleta || undefined}
+        onChange={(e) => cambiar(e.target.value)}
+      />
+      <button type="button" className="campo-fecha-boton" aria-label="Elegir la fecha en el calendario" onClick={abrirCalendario}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M3 10h18M8 3v4M16 3v4" />
+        </svg>
+      </button>
+      <input
+        ref={calendario}
+        type="date"
+        className="campo-fecha-nativo"
+        tabIndex={-1}
+        aria-hidden="true"
+        min={min}
+        max={max}
+        value={textoAIso(texto) ?? ''}
+        onChange={(e) => {
+          if (!e.target.value) return;
+          setTexto(isoATexto(e.target.value));
+          onChange(e.target.value);
+        }}
+      />
+    </span>
+  );
+};
+
 export const usePeriodo = () => {
   const [desde, setDesde] = useState(inicioMes);
   const [hasta, setHasta] = useState(hoy);
@@ -60,11 +151,11 @@ export const SelectorPeriodo: FC<{ periodo: Periodo; titulo: string }> = ({ peri
         <h4>{titulo}</h4>
         <label>
           Desde
-          <input type="date" value={periodo.desde} max={periodo.hasta} onChange={(e) => periodo.setDesde(e.target.value)} />
+          <CampoFecha filtro value={periodo.desde} max={periodo.hasta} onChange={periodo.setDesde} />
         </label>
         <label>
           Hasta
-          <input type="date" value={periodo.hasta} min={periodo.desde} onChange={(e) => periodo.setHasta(e.target.value)} />
+          <CampoFecha filtro value={periodo.hasta} min={periodo.desde} onChange={periodo.setHasta} />
         </label>
       </div>
     </>

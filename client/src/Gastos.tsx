@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
 import { pedir } from './api';
-import { Avisos, Barra, Encabezado, SelectorPeriodo, useAvisos, usePeriodo } from './Comunes';
+import { Avisos, Barra, CampoFecha, Encabezado, SelectorPeriodo, useAvisos, usePeriodo } from './Comunes';
 import { fechaVisible, hoy, moneda } from './formato';
 
 // Gestión de gastos y egresos (RF013 a RF018)
@@ -161,7 +161,7 @@ export const Gastos: FC<{ esAdmin: boolean; permisos: string[] }> = ({ esAdmin, 
             </label>
             <label>
               Fecha
-              <input type="date" max={hoy()} value={formulario.fecha} onChange={(e) => setFormulario({ ...formulario, fecha: e.target.value })} />
+              <CampoFecha max={hoy()} value={formulario.fecha} onChange={(valor) => setFormulario({ ...formulario, fecha: valor })} />
             </label>
             <label className="modulo-campo-ancho">
               Descripción (opcional)

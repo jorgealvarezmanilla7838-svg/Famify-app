@@ -37,7 +37,7 @@ export const validarGasto = (body: any) => {
   let fecha: string | null = null;
   if (body.fecha !== undefined && body.fecha !== null && body.fecha !== '') {
     if (!esFechaValida(body.fecha)) {
-      errores.push('La fecha no es válida (usa el formato AAAA-MM-DD).');
+      errores.push('La fecha no es válida (escríbela como DD/MM/AAAA).');
     } else if (body.fecha > fechaLocal(new Date())) {
       errores.push('La fecha del gasto no puede ser futura.');
     } else {
@@ -74,7 +74,7 @@ export const leerPeriodo = (query: any): { desde: string; hasta: string; error?:
   const hasta = query.hasta ? String(query.hasta) : fechaLocal(hoy);
 
   if (!esFechaValida(desde) || !esFechaValida(hasta)) {
-    return { desde, hasta, error: 'Las fechas del periodo no son válidas (usa AAAA-MM-DD).' };
+    return { desde, hasta, error: 'Las fechas del periodo no son válidas (escríbelas como DD/MM/AAAA).' };
   }
   if (desde > hasta) {
     return { desde, hasta, error: 'La fecha inicial no puede ser mayor a la final.' };

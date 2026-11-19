@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useState, type FC } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState, type FC } from 'react';
 import { pedir } from './api';
-import { Administracion } from './Administracion';
+
 import { Cuestionario } from './Cuestionario';
-import { Gastos } from './Gastos';
-import { Ingresos } from './Ingresos';
-import { Metas } from './Metas';
-import { Notificaciones } from './Notificaciones';
-import { Presupuesto } from './Presupuesto';
-import { Reportes } from './Reportes';
-import { Resumen } from './Resumen';
+
+
+
+
+
+
+
 import './Modulos.css';
+
+// RNF11_ Cada sección se descarga solo cuando se abre, así la pantalla principal carga más rápido
+const cargar = <T extends string>(nombre: T, modulo: () => Promise<Record<T, FC<any>>>) =>
+  lazy(() => modulo().then((m) => ({ default: m[nombre] })));
+const Administracion = cargar('Administracion', () => import('./Administracion'));
+const Gastos = cargar('Gastos', () => import('./Gastos'));
+const Ingresos = cargar('Ingresos', () => import('./Ingresos'));
+const Metas = cargar('Metas', () => import('./Metas'));
+const Notificaciones = cargar('Notificaciones', () => import('./Notificaciones'));
+const Presupuesto = cargar('Presupuesto', () => import('./Presupuesto'));
+const Reportes = cargar('Reportes', () => import('./Reportes'));
+const Resumen = cargar('Resumen', () => import('./Resumen'));
 
 // Estructura de navegación común a todas las pantallas (RNF19)
 
@@ -78,6 +90,7 @@ export const Panel: FC<Props> = ({ usuario, onCerrarSesion, onBaja }) => {
 
   return (
     <div className="panel">
+      <a className="saltar-contenido" href="#contenido">Saltar al contenido</a>
       <header className="panel-superior">
         <div>
           <h1 className="panel-marca">Famify</h1>
@@ -97,7 +110,8 @@ export const Panel: FC<Props> = ({ usuario, onCerrarSesion, onBaja }) => {
         ))}
       </nav>
 
-      <main>
+      <main id="contenido" tabIndex={-1}>
+        <Suspense fallback={<p role="status">Cargando…</p>}>
         {seccion === 'resumen' && <Resumen />}
         {seccion === 'ingresos' && <Ingresos permisos={permisos} />}
         {seccion === 'gastos' && <Gastos esAdmin={esAdmin} permisos={permisos} />}
@@ -111,6 +125,7 @@ export const Panel: FC<Props> = ({ usuario, onCerrarSesion, onBaja }) => {
             <Cuestionario nombre={usuario.nombre} edicion onCompletado={() => void actualizarAcceso()} />
           </section>
         )}
+        </Suspense>
       </main>
     </div>
   );

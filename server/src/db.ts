@@ -19,6 +19,12 @@ export const pool = new Pool({
   max: Number(process.env.DB_POOL_MAX) || 20,
 });
 
+// RNF13_ Si PostgreSQL se reinicia, las conexiones inactivas emiten 'error'. Sin este manejador
+// Node cerraría todo el servidor; con él solo se registra y el pool abre conexiones nuevas.
+pool.on('error', (err) => {
+  console.error('Conexión inactiva de la base de datos perdida:', err.message);
+});
+
 // RNF15_ Ejecuta varias operaciones como una sola: si alguna falla, se revierten todas
 export const enTransaccion = async <T>(operacion: (cliente: PoolClient) => Promise<T>): Promise<T> => {
   const cliente = await pool.connect();

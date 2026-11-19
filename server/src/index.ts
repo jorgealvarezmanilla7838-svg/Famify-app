@@ -74,10 +74,20 @@ const alIniciar = (protocolo: string) => () => {
 };
 
 // RNF02_ Con TLS_CERT y TLS_KEY el servidor atiende directamente por HTTPS
-if (process.env.TLS_CERT && process.env.TLS_KEY) {
-  https
-    .createServer({ cert: fs.readFileSync(process.env.TLS_CERT), key: fs.readFileSync(process.env.TLS_KEY) }, app)
-    .listen(PORT, alIniciar('https'));
-} else {
-  app.listen(PORT, alIniciar('http'));
-}
+// (npm run tls:generar crea un certificado de desarrollo; en producción se usa uno real)
+const servidor =
+  process.env.TLS_CERT && process.env.TLS_KEY
+    ? https
+        .createServer({ cert: fs.readFileSync(process.env.TLS_CERT), key: fs.readFileSync(process.env.TLS_KEY) }, app)
+        .listen(PORT, alIniciar('https'))
+    : app.listen(PORT, alIniciar('http'));
+
+// RNF13_ Un error inesperado se registra y el servidor sigue atendiendo; al apagarlo se cierra con orden
+process.on('unhandledRejection', (motivo) => console.error('Promesa rechazada sin manejar:', motivo));
+process.on('uncaughtException', (err) => console.error('Error inesperado:', err.message));
+const apagar = () => {
+  servidor.close(() => void pool.end().finally(() => process.exit(0)));
+  setTimeout(() => process.exit(0), 10000).unref();
+};
+process.on('SIGTERM', apagar);
+process.on('SIGINT', apagar);

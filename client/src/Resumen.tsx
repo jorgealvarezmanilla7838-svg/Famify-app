@@ -15,6 +15,13 @@ interface DatosResumen {
   metas: { id: number; nombre: string; monto_objetivo: number; monto_ahorrado: number; porcentaje: number; alcance: string; integrante: string | null }[];
 }
 
+// El servidor entrega los meses como AAAA-MM; aquí se muestran como "noviembre 2026"
+const NOMBRES_MES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const nombreMes = (mes: string) => {
+  const [anio, numero] = mes.split('-');
+  return `${NOMBRES_MES[Number(numero) - 1] ?? mes} ${anio}`;
+};
+
 export const Resumen = () => {
   const periodo = usePeriodo();
   const { desde, hasta } = periodo;
@@ -71,6 +78,22 @@ export const Resumen = () => {
             <Barra etiqueta="Egresos" detalle={moneda(familia.gastos)} valor={familia.gastos} maximo={mayorComparacion} estado="gasto" />
             <p className="modulo-nota">Tus movimientos: ingresos {moneda(datos.totales.mio.ingresos)}, gastos {moneda(datos.totales.mio.gastos)}.</p>
           </section>
+
+          {datos.por_mes.length > 1 && (
+            <section className="modulo-consulta" aria-label="Comparación mes por mes">
+              <h4>Mes por mes</h4>
+              {datos.por_mes.map((m) => {
+                const mayorMensual = Math.max(...datos.por_mes.flatMap((x) => [x.ingresos, x.gastos]), 0);
+                return (
+                  <div key={m.mes}>
+                    <strong>{nombreMes(m.mes)}</strong>
+                    <Barra etiqueta="Ingresos" detalle={moneda(m.ingresos)} valor={m.ingresos} maximo={mayorMensual} estado="ingreso" />
+                    <Barra etiqueta="Egresos" detalle={moneda(m.gastos)} valor={m.gastos} maximo={mayorMensual} estado="gasto" />
+                  </div>
+                );
+              })}
+            </section>
+          )}
 
           <section className="modulo-consulta" aria-label="Gastos por categoría">
             <h4>Gastos por categoría</h4>

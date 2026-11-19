@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
 import { pedir } from './api';
-import { Avisos, Barra, Encabezado, useAvisos } from './Comunes';
+import { Avisos, Barra, CampoFecha, Encabezado, useAvisos } from './Comunes';
 import { fechaVisible, finMes, inicioMes, moneda } from './formato';
 
 // Presupuesto familiar (RF019 a RF022)
@@ -121,11 +121,11 @@ export const Presupuesto: FC<{ permisos: string[] }> = ({ permisos }) => {
             </label>
             <label>
               Desde
-              <input type="date" value={formulario.desde} onChange={(e) => setFormulario({ ...formulario, desde: e.target.value })} />
+              <CampoFecha value={formulario.desde} onChange={(valor) => setFormulario({ ...formulario, desde: valor })} />
             </label>
             <label>
               Hasta
-              <input type="date" value={formulario.hasta} onChange={(e) => setFormulario({ ...formulario, hasta: e.target.value })} />
+              <CampoFecha value={formulario.hasta} onChange={(valor) => setFormulario({ ...formulario, hasta: valor })} />
             </label>
           </div>
 
