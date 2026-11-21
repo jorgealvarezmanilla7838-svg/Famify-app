@@ -1,1 +1,6 @@
 server/.env
+node_modules/
+dist/
+server/respaldos/
+server/certs/
+client/.env

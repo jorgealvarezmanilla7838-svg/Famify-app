@@ -1,68 +1,93 @@
+// Validaciones del módulo de gastos
+const dosDigitos = (n: number) => String(n).padStart(2, '0');
+
+// fecha local en formato AAAA-MM-DD
+export const fechaLocal = (d: Date) =>
+  `${d.getFullYear()}-${dosDigitos(d.getMonth() + 1)}-${dosDigitos(d.getDate())}`;
+
+// revisa que sea una fecha real, por ejemplo 2026-02-31 no existe
+export const esFechaValida = (texto: any) => {
+  if (typeof texto !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(texto)) return false;
+  const d = new Date(texto + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === texto;
+};
+
+const esEnteroPositivo = (valor: any) => /^\d+$/.test(String(valor)) && Number(valor) > 0;
+
+// RF13_ Registro de gastos (validar que el monto y los datos vengan bien)
 export const validarGasto = (body: any) => {
   const errores: string[] = [];
 
-  const monto = Number(body?.monto);
-  if (isNaN(monto) || monto <= 0) {
-    errores.push('El monto debe ser mayor a 0.');
+  if (!/^\d+(\.\d{1,2})?$/.test(String(body.monto ?? '')) || Number(body.monto) <= 0) {
+    errores.push('El monto debe ser un número mayor a 0, con máximo 2 decimales.');
+  } else if (Number(body.monto) > 9999999999.99) {
+    errores.push('El monto es demasiado grande.');
   }
 
-  const categoria_id = Number(body?.categoria_id);
-  if (isNaN(categoria_id) || categoria_id <= 0) {
-    errores.push('Selecciona una categoría válida.');
+  // RF15_ Clasificación de gastos por categoría
+  if (!esEnteroPositivo(body.categoria_id)) {
+    errores.push('Selecciona una categoría.');
   }
 
-  // Aceptar tanto el string del catálogo como id numérico o nulo
-  const metodo_pago_id = body?.metodo_pago_id || body?.metodo_de_pago;
-  const metodosValidos = ['efectivo', 'tarjeta_debito', 'tarjeta_credito', 'otro'];
-
-  if (!metodo_pago_id || (!metodosValidos.includes(String(metodo_pago_id)) && isNaN(Number(metodo_pago_id)))) {
+  // RF16_ Registro de método de pago
+  if (!esEnteroPositivo(body.metodo_pago_id)) {
     errores.push('Selecciona un método de pago.');
+  }
+
+  let fecha: string | null = null;
+  if (body.fecha !== undefined && body.fecha !== null && body.fecha !== '') {
+    if (!esFechaValida(body.fecha)) {
+      errores.push('La fecha no es válida (escríbela como DD/MM/AAAA).');
+    } else if (body.fecha > fechaLocal(new Date())) {
+      errores.push('La fecha del gasto no puede ser futura.');
+    } else {
+      fecha = body.fecha;
+    }
+  }
+
+  let descripcion: string | null = null;
+  if (body.descripcion !== undefined && body.descripcion !== null) {
+    const texto = String(body.descripcion).trim();
+    if (texto.length > 200) {
+      errores.push('La descripción no puede pasar de 200 caracteres.');
+    } else if (texto !== '') {
+      descripcion = texto;
+    }
   }
 
   return {
     errores,
     datos: {
-      monto,
-      categoria_id,
-      metodo_pago_id: String(metodo_pago_id),
-      descripcion: typeof body?.descripcion === 'string' ? body.descripcion.trim() : '',
-      fecha: body?.fecha || null,
+      monto: Number(body.monto),
+      categoria_id: Number(body.categoria_id),
+      metodo_pago_id: Number(body.metodo_pago_id),
+      fecha,
+      descripcion,
     },
   };
 };
 
-// Auxiliar para parsear y validar rangos de fecha en consultas GET (RF17/RF18)
-export const leerPeriodo = (query: any) => {
-  const hoy = new Date().toISOString().split('T')[0];
-  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+// RF17_ Consulta de gastos por periodo (si no mandan fechas, se toma el mes actual)
+export const leerPeriodo = (query: any): { desde: string; hasta: string; error?: string } => {
+  const hoy = new Date();
+  const desde = query.desde ? String(query.desde) : fechaLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+  const hasta = query.hasta ? String(query.hasta) : fechaLocal(hoy);
 
-  const desde = typeof query?.desde === 'string' && query.desde.trim() !== '' ? query.desde : primerDiaMes;
-  const hasta = typeof query?.hasta === 'string' && query.hasta.trim() !== '' ? query.hasta : hoy;
-
+  if (!esFechaValida(desde) || !esFechaValida(hasta)) {
+    return { desde, hasta, error: 'Las fechas del periodo no son válidas (escríbelas como DD/MM/AAAA).' };
+  }
   if (desde > hasta) {
-    return { error: 'La fecha "desde" no puede ser posterior a la fecha "hasta".', desde, hasta };
+    return { desde, hasta, error: 'La fecha inicial no puede ser mayor a la final.' };
   }
 
-  return { error: null, desde, hasta };
+  // RNF10_ Reportes de hasta un año: se limita el periodo a 366 días
+  const dias = (Date.parse(hasta) - Date.parse(desde)) / 86400000;
+  if (dias > 366) {
+    return { desde, hasta, error: 'El periodo máximo de consulta es de un año.' };
+  }
+
+  return { desde, hasta };
 };
 
-// Auxiliar para validar IDs numéricos en parámetros de URL o query
-export const leerId = (id: any): number | null => {
-  const num = Number(id);
-  return !isNaN(num) && num > 0 ? num : null;
-};
-
-// Fecha local en formato AAAA-MM-DD (toISOString usaría UTC y puede dar el día siguiente)
-export const fechaLocal = (d: Date): string => {
-  const mes = String(d.getMonth() + 1).padStart(2, '0');
-  const dia = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mes}-${dia}`;
-};
-
-// true si el texto es una fecha real con formato AAAA-MM-DD (también las usa ingresos.validaciones.ts)
-export const esFechaValida = (valor: any): boolean => {
-  if (typeof valor !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(valor)) return false;
-  const [anio = 0, mes = 0, dia = 0] = valor.split('-').map(Number);
-  const f = new Date(anio, mes - 1, dia);
-  return f.getFullYear() === anio && f.getMonth() === mes - 1 && f.getDate() === dia;
-};
+// para los parametros que deben ser un id (numero entero positivo)
+export const leerId = (valor: any): number | null => (esEnteroPositivo(valor) ? Number(valor) : null);

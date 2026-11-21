@@ -1,0 +1,6 @@
+{
+  // Revisión de tipos de las pruebas (npx tsc -p test). No genera archivos.
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "rootDir": "..", "noEmit": true, "declaration": false, "declarationMap": false },
+  "include": ["**/*.ts", "../src/**/*.ts"]
+}

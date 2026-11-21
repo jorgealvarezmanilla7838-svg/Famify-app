@@ -66,11 +66,11 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
     }
   }
 
-  // RF06_ y RF07_ métodos de pago (la tarjeta de crédito lleva día de corte y día límite)
-  // En la base de datos cada usuario guarda UN solo corte y UN solo límite de pago
-  // (configuracion_financiera.dia_de_corte / fecha_limite_de_pago), por eso solo se
-  // acepta una tarjeta de crédito y cada método de pago una sola vez.
+  // RF06_ y RF07_ métodos de pago. La tarjeta de crédito lleva día de corte y día límite de pago;
+  // la base de datos guarda una sola tarjeta de crédito por usuario (configuracion_financiera).
+  // RNF07_ nunca se guarda el número de la tarjeta.
   const metodos: MetodoPagoUsuario[] = [];
+  const aliasCredito = new Set<string>();
   if (!Array.isArray(body?.metodos_pago) || body.metodos_pago.length === 0) {
     errores.push('Selecciona al menos un método de pago.');
   } else if (body.metodos_pago.length > 20) {
@@ -85,12 +85,8 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
         errores.push(`${etiqueta} selecciona un método de pago válido.`);
         return;
       }
-      if (vistos.has(id)) {
-        errores.push(
-          metodo.es_credito
-            ? `${etiqueta} solo puedes registrar una tarjeta de crédito.`
-            : `${etiqueta} el método "${metodo.nombre}" está repetido.`
-        );
+      if (vistos.has(id) && !metodo.es_credito) {
+        errores.push(`${etiqueta} el método "${metodo.nombre}" está repetido.`);
         return;
       }
       vistos.add(id);
@@ -99,6 +95,17 @@ export const validarConfiguracion = (body: any, catalogos: CatalogosValidacion) 
       if (!alias || alias.length > 50) {
         errores.push(`${etiqueta} el alias debe tener entre 1 y 50 caracteres.`);
         return;
+      }
+      if (/\d{12,}/.test(alias.replace(/[\s-]/g, ''))) {
+        errores.push(`${etiqueta} el alias no debe incluir el número de la tarjeta.`);
+        return;
+      }
+      if (metodo.es_credito) {
+        if (aliasCredito.size > 0) {
+          errores.push(`${etiqueta} solo se puede registrar una tarjeta de crédito.`);
+          return;
+        }
+        aliasCredito.add(alias.toLowerCase());
       }
 
       let diaCorte: number | null = null;

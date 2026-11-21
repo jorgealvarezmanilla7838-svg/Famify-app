@@ -1,298 +1,250 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
+import { pedir } from './api';
+import { Avisos, Barra, CampoFecha, Encabezado, SelectorPeriodo, useAvisos, usePeriodo } from './Comunes';
+import { fechaVisible, hoy, moneda } from './formato';
 
-interface Categoria {
-  id: number;
-  nombre: string;
-}
+// Gestión de gastos y egresos (RF013 a RF018)
 
-interface MetodoPago {
-  id: string; // Adaptado a texto para coincidir con la columna metodo_de_pago
-  nombre: string;
-  es_credito: boolean;
-}
-
+interface Opcion { id: number | string; nombre: string }
 interface Gasto {
-  id: number;
+  id: number | string;
   fecha: string;
-  monto: number;
+  monto: string;
   descripcion: string | null;
-  categoria_id: number;
+  categoria_id: number | string;
   categoria: string;
-  metodo_pago_id: string | null;
-  metodo_pago: string | null;
-  usuario_id: number;
+  metodo_pago_id: number | string;
+  metodo_pago: string;
   integrante: string;
   es_mio: boolean;
 }
+interface PorCategoria { categoria_id: number | string; categoria: string; total: string; porcentaje: string }
 
-interface GastoPorCategoria {
-  categoria_id: number;
-  categoria: string;
-  total: string;
-  porcentaje: string;
-}
+const POR_PAGINA = 50;
 
-const Gastos: React.FC<{ token: string }> = ({ token }) => {
+const formularioVacio = () => ({ monto: '', categoria_id: '', metodo_pago_id: '', fecha: hoy(), descripcion: '' });
+
+export const Gastos: FC<{ esAdmin: boolean; permisos: string[] }> = ({ esAdmin, permisos }) => {
+  const periodo = usePeriodo();
+  const { desde, hasta } = periodo;
+  const { errores, aviso, limpiar, fallar, exito } = useAvisos();
+  const [categorias, setCategorias] = useState<Opcion[]>([]);
+  const [metodos, setMetodos] = useState<Opcion[]>([]);
   const [gastos, setGastos] = useState<Gasto[]>([]);
-  const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [metodosPago, setMetodosPago] = useState<MetodoPago[]>([]);
-  const [resumenCategorias, setResumenCategorias] = useState<GastoPorCategoria[]>([]);
-  
-  const hoy = new Date().toISOString().split('T')[0];
-  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
-  const [desde, setDesde] = useState(primerDiaMes);
-  const [hasta, setHasta] = useState(hoy);
-  
-  const [monto, setMonto] = useState('');
-  const [descripcion, setDescripcion] = useState('');
-  const [categoriaId, setCategoriaId] = useState('');
-  const [metodoPagoId, setMetodoPagoId] = useState('');
-  const [fecha, setFecha] = useState(hoy);
-  const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [total, setTotal] = useState('0');
+  const [porCategoria, setPorCategoria] = useState<PorCategoria[]>([]);
+  const [filtroCategoria, setFiltroCategoria] = useState('');
+  const [formulario, setFormulario] = useState(formularioVacio);
+  const [editando, setEditando] = useState<number | string | null>(null);
+  const [cargando, setCargando] = useState(true);
+  const [cantidad, setCantidad] = useState(0);
+  // Al cambiar periodo o categoría la lista vuelve a la primera página
+  const filtrosActuales = `${desde}|${hasta}|${filtroCategoria}`;
+  const [paginacion, setPaginacion] = useState({ filtros: filtrosActuales, pagina: 1 });
+  const pagina = paginacion.filtros === filtrosActuales ? paginacion.pagina : 1;
+  const totalPaginas = Math.max(1, Math.ceil(cantidad / POR_PAGINA));
 
-  const [error, setError] = useState('');
-  const [cargando, setCargando] = useState(false);
+  const puedeRegistrar = permisos.includes('gastos.registrar');
+  const puedeEditar = permisos.includes('gastos.editar');
+  const puedeVerReportes = permisos.includes('reportes.ver');
 
   useEffect(() => {
-    const cargarCatalogos = async () => {
-      try {
-        const res = await fetch('http://localhost:4000/api/gastos/catalogos', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setCategorias(data.categorias);
-          setMetodosPago(data.metodos_pago);
-        }
-      } catch (err) {
-        console.error('Error al cargar catálogos', err);
-      }
-    };
-    cargarCatalogos();
-  }, [token]);
+    pedir('/api/gastos/catalogos')
+      .then((r) => {
+        setCategorias(r.categorias);
+        setMetodos(r.metodos_pago);
+      })
+      .catch(fallar);
+  }, [fallar]);
 
-  const cargarGastos = async () => {
-    setCargando(true);
-    setError('');
+  const cargar = useCallback(async () => {
     try {
-      // 1. Obtener la lista de gastos
-      const resGastos = await fetch(`http://localhost:4000/api/gastos?desde=${desde}&hasta=${hasta}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const dataGastos = await resGastos.json();
-
-      if (dataGastos.success) {
-        setGastos(dataGastos.gastos);
-      } else {
-        setError(dataGastos.error || 'Error al obtener gastos');
-      }
-
-      // 2. Obtener resumen por categoría de forma opcional (si no tiene permisos no rompe la vista)
-      try {
-        const resCat = await fetch(`http://localhost:4000/api/gastos/por-categoria?desde=${desde}&hasta=${hasta}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const dataCat = await resCat.json();
-        if (dataCat.success) {
-          setResumenCategorias(dataCat.categorias || []);
-        }
-      } catch {
-        console.warn('No se pudo cargar el resumen por categorías.');
-      }
-
+      const consulta = `desde=${desde}&hasta=${hasta}`;
+      const categoria = filtroCategoria ? `&categoria_id=${filtroCategoria}` : '';
+      const [lista, categoriasPeriodo] = await Promise.all([
+        pedir(`/api/gastos?${consulta}${categoria}&limite=${POR_PAGINA}&pagina=${pagina}`),
+        // El desglose es complementario: si el permiso se retiró, la lista de gastos debe seguir visible
+        puedeVerReportes
+          ? pedir(`/api/gastos/por-categoria?${consulta}`).catch(() => ({ categorias: [] }))
+          : Promise.resolve({ categorias: [] }),
+      ]);
+      setGastos(lista.gastos);
+      setTotal(lista.total);
+      setCantidad(lista.cantidad);
+      setPorCategoria(categoriasPeriodo.categorias);
     } catch (err) {
-      setError('Error de conexión con el servidor.');
+      fallar(err);
     } finally {
       setCargando(false);
     }
-  };
+  }, [desde, hasta, filtroCategoria, pagina, puedeVerReportes, fallar]);
 
   useEffect(() => {
-    cargarGastos();
-  }, [desde, hasta]);
+    void Promise.resolve().then(cargar);
+  }, [cargar]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!monto || !categoriaId || !metodoPagoId) {
-      setError('El monto, la categoría y el método de pago son obligatorios.');
-      return;
-    }
+  const cancelar = () => {
+    setEditando(null);
+    setFormulario(formularioVacio());
+  };
 
-    const payload = {
-      monto: Number(monto),
-      descripcion,
-      categoria_id: Number(categoriaId),
-      metodo_pago_id: metodoPagoId, // Se envía la cadena directamente (ej. "tarjeta_credito")
-      fecha
-    };
-
+  const guardar = async (evento: FormEvent) => {
+    evento.preventDefault();
+    limpiar();
     try {
-      const url = editandoId
-        ? `http://localhost:4000/api/gastos/${editandoId}`
-        : 'http://localhost:4000/api/gastos';
-      const method = editandoId ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(payload)
+      await pedir(`/api/gastos${editando ? `/${editando}` : ''}`, {
+        metodo: editando ? 'PUT' : 'POST',
+        cuerpo: formulario,
       });
-
-      const data = await res.json();
-      if (data.success) {
-        limpiarFormulario();
-        cargarGastos();
-      } else {
-        setError(data.error || 'Error al guardar el gasto.');
-      }
+      exito(editando ? 'Gasto actualizado.' : 'Gasto registrado.');
+      cancelar();
+      await cargar();
     } catch (err) {
-      setError('Error al procesar la solicitud.');
+      fallar(err);
     }
   };
 
-  const iniciarEdicion = (g: Gasto) => {
-    setEditandoId(g.id);
-    setMonto(String(g.monto));
-    setDescripcion(g.descripcion || '');
-    setCategoriaId(String(g.categoria_id));
-    setMetodoPagoId(g.metodo_pago_id ? String(g.metodo_pago_id) : '');
-    setFecha(g.fecha);
+  const editar = (gasto: Gasto) => {
+    limpiar();
+    setEditando(gasto.id);
+    setFormulario({
+      monto: String(gasto.monto),
+      categoria_id: String(gasto.categoria_id),
+      metodo_pago_id: String(gasto.metodo_pago_id),
+      fecha: gasto.fecha,
+      descripcion: gasto.descripcion ?? '',
+    });
   };
 
-  const eliminarGasto = async (id: number) => {
-    if (!confirm('¿Estás seguro de eliminar este gasto?')) return;
+  const eliminar = async (id: number | string) => {
+    if (!window.confirm('¿Quieres eliminar este gasto?')) return;
+    limpiar();
     try {
-      const res = await fetch(`http://localhost:4000/api/gastos/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.success) {
-        cargarGastos();
-      } else {
-        setError(data.error);
-      }
+      await pedir(`/api/gastos/${id}`, { metodo: 'DELETE' });
+      exito('Gasto eliminado.');
+      if (editando === id) cancelar();
+      await cargar();
     } catch (err) {
-      setError('Error al eliminar el gasto.');
+      fallar(err);
     }
   };
 
-  const limpiarFormulario = () => {
-    setEditandoId(null);
-    setMonto('');
-    setDescripcion('');
-    setCategoriaId('');
-    setMetodoPagoId('');
-    setFecha(hoy);
-    setError('');
-  };
+  const mayor = Math.max(0, ...porCategoria.map((c) => Number(c.total)));
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
-      <h2>Gestión de Gastos y Egresos</h2>
+    <section className="modulo">
+      <Encabezado titulo="Gestión de gastos" descripcion="Registra y consulta en qué se usa el dinero." icono="−" />
+      <Avisos errores={errores} aviso={aviso} />
 
-      {error && <div style={{ color: 'red', marginBottom: '10px' }}>{error}</div>}
+      {(puedeRegistrar || editando) && (
+        <form className="modulo-formulario" onSubmit={guardar} noValidate>
+          <h4>{editando ? 'Editar gasto' : 'Registrar gasto'}</h4>
+          <div className="modulo-campos">
+            <label>
+              Monto
+              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={formulario.monto}
+                onChange={(e) => setFormulario({ ...formulario, monto: e.target.value })} />
+            </label>
+            <label>
+              Categoría
+              <select value={formulario.categoria_id} onChange={(e) => setFormulario({ ...formulario, categoria_id: e.target.value })}>
+                <option value="">Selecciona…</option>
+                {categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </label>
+            <label>
+              Método de pago
+              <select value={formulario.metodo_pago_id} onChange={(e) => setFormulario({ ...formulario, metodo_pago_id: e.target.value })}>
+                <option value="">Selecciona…</option>
+                {metodos.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+              </select>
+            </label>
+            <label>
+              Fecha
+              <CampoFecha max={hoy()} value={formulario.fecha} onChange={(valor) => setFormulario({ ...formulario, fecha: valor })} />
+            </label>
+            <label className="modulo-campo-ancho">
+              Descripción (opcional)
+              <input type="text" maxLength={200} value={formulario.descripcion} onChange={(e) => setFormulario({ ...formulario, descripcion: e.target.value })} />
+            </label>
+          </div>
+          <div className="modulo-acciones-formulario">
+            <button type="submit" className="modulo-boton modulo-boton--primario">{editando ? 'Guardar cambios' : 'Registrar gasto'}</button>
+            {editando && <button type="button" className="modulo-boton" onClick={cancelar}>Cancelar</button>}
+          </div>
+        </form>
+      )}
 
-      <form onSubmit={handleSubmit} style={{ background: '#c8c6c6', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
-        <h3>{editandoId ? 'Editar Gasto' : 'Registrar Nuevo Gasto'}</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <div>
-            <label>Monto ($):</label>
-            <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} required style={{ width: '100%' }} />
-          </div>
-          <div>
-            <label>Fecha:</label>
-            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} required style={{ width: '100%' }} />
-          </div>
-          <div>
-            <label>Categoría (RF015):</label>
-            <select value={categoriaId} onChange={e => setCategoriaId(e.target.value)} required style={{ width: '100%' }}>
-              <option value="">Selecciona categoría...</option>
-              {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+      <section className="modulo-consulta" aria-label="Consulta de gastos por periodo">
+        <SelectorPeriodo periodo={periodo} titulo="Gastos por periodo" />
+        <div className="modulo-filtros modulo-filtros--simple">
+          <label>
+            Filtrar por categoría
+            <select value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)}>
+              <option value="">Todas</option>
+              {categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
-          </div>
-          <div>
-            <label>Método de Pago (RF016):</label>
-            <select value={metodoPagoId} onChange={e => setMetodoPagoId(e.target.value)} required style={{ width: '100%' }}>
-              <option value="">Selecciona método...</option>
-              {metodosPago.map(m => <option key={m.id} value={m.id}>{m.nombre}</option>)}
-            </select>
-          </div>
+          </label>
         </div>
-        <div style={{ marginTop: '10px' }}>
-          <label>Descripción / Notas:</label>
-          <input type="text" value={descripcion} onChange={e => setDescripcion(e.target.value)} style={{ width: '100%' }} />
+        <div className="modulo-resumen">
+          <div><span>Total del periodo</span><strong>{moneda(total)}</strong></div>
+          <div><span>Registros</span><strong>{cantidad}</strong></div>
+          <span className="modulo-alcance">{esAdmin ? 'Toda la familia' : 'Mis gastos'}</span>
         </div>
-        <div style={{ marginTop: '15px' }}>
-          <button type="submit">{editandoId ? 'Actualizar Gasto' : 'Guardar Gasto'}</button>
-          {editandoId && <button type="button" onClick={limpiarFormulario} style={{ marginLeft: '10px' }}>Cancelar</button>}
-        </div>
-      </form>
 
-      <div style={{ display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '20px' }}>
-        <strong>Filtrar Periodo:</strong>
-        <label>Desde: <input type="date" value={desde} onChange={e => setDesde(e.target.value)} /></label>
-        <label>Hasta: <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} /></label>
-      </div>
-
-      {resumenCategorias.length > 0 && (
-        <div style={{ marginBottom: '20px', background: '#d1ffff', padding: '15px', borderRadius: '8px' }}>
-          <h4>Gastos por Categoría (RF018)</h4>
-          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            {resumenCategorias.map(rc => (
-              <div key={rc.categoria_id} style={{ background: '#fff', padding: '10px', borderRadius: '5px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                <strong>{rc.categoria}:</strong> ${Number(rc.total).toFixed(2)} ({rc.porcentaje}%)
+        {cargando ? (
+          <p className="modulo-vacio">Cargando gastos…</p>
+        ) : gastos.length ? (
+          <div className="modulo-tabla-contenedor">
+            <table className="modulo-tabla">
+              <thead>
+                <tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Método</th><th>Integrante</th><th>Monto</th><th>Acciones</th></tr>
+              </thead>
+              <tbody>
+                {gastos.map((g) => (
+                  <tr key={g.id}>
+                    <td>{fechaVisible(g.fecha)}</td>
+                    <td>{g.descripcion || '—'}</td>
+                    <td><span className="modulo-etiqueta">{g.categoria}</span></td>
+                    <td>{g.metodo_pago}</td>
+                    <td>{g.integrante}</td>
+                    <td className="modulo-monto modulo-monto--gasto">{moneda(g.monto)}</td>
+                    <td>
+                      {puedeEditar && (esAdmin || g.es_mio) && (
+                        <div className="modulo-acciones">
+                          <button type="button" onClick={() => editar(g)}>Editar</button>
+                          <button type="button" className="modulo-eliminar" onClick={() => void eliminar(g.id)}>Eliminar</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {totalPaginas > 1 && (
+              <div className="modulo-acciones-formulario">
+                <button type="button" className="modulo-boton" disabled={pagina <= 1}
+                  onClick={() => setPaginacion({ filtros: filtrosActuales, pagina: pagina - 1 })}>Anterior</button>
+                <span className="modulo-nota">Página {pagina} de {totalPaginas}</span>
+                <button type="button" className="modulo-boton" disabled={pagina >= totalPaginas}
+                  onClick={() => setPaginacion({ filtros: filtrosActuales, pagina: pagina + 1 })}>Siguiente</button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <h3>Listado de Gastos</h3>
-      {cargando ? <p>Cargando gastos...</p> : (
-        <table border={1} cellPadding={8} style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: '#ddd' }}>
-              <th>Fecha</th>
-              <th>Integrante</th>
-              <th>Categoría</th>
-              <th>Método Pago</th>
-              <th>Descripción</th>
-              <th>Monto</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {gastos.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center' }}>No hay gastos registrados en este periodo.</td></tr>
-            ) : (
-              gastos.map(g => (
-                <tr key={g.id}>
-                  <td>{g.fecha}</td>
-                  <td>{g.integrante}</td>
-                  <td>{g.categoria}</td>
-                  <td>{g.metodo_pago || 'N/A'}</td>
-                  <td>{g.descripcion || '-'}</td>
-                  <td style={{ fontWeight: 'bold' }}>${Number(g.monto).toFixed(2)}</td>
-                  <td>
-                    {g.es_mio && (
-                      <>
-                        <button onClick={() => iniciarEdicion(g)}>Editar</button>
-                        <button onClick={() => eliminarGasto(g.id)} style={{ marginLeft: '5px', color: 'red' }}>Eliminar</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))
             )}
-          </tbody>
-        </table>
+          </div>
+        ) : (
+          <p className="modulo-vacio">No hay gastos registrados en este periodo.</p>
+        )}
+      </section>
+
+      {porCategoria.length > 0 && (
+        <section className="modulo-consulta" aria-label="Gastos por categoría">
+          <h4>Gasto de la familia por categoría</h4>
+          {porCategoria.map((c) => (
+            <Barra key={c.categoria_id} etiqueta={c.categoria} detalle={`${moneda(c.total)} (${c.porcentaje} %)`}
+              valor={Number(c.total)} maximo={mayor} estado="gasto" />
+          ))}
+        </section>
       )}
-    </div>
+    </section>
   );
 };
-
-export default Gastos;

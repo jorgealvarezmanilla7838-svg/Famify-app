@@ -1,428 +1,196 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import './Presupuesto.css';
+import { useCallback, useEffect, useState, type FC, type FormEvent } from 'react';
+import { pedir } from './api';
+import { Avisos, Barra, CampoFecha, Encabezado, useAvisos } from './Comunes';
+import { fechaVisible, finMes, inicioMes, moneda } from './formato';
 
-// MÓDULO 5: Presupuesto familiar (RF19 a RF22)
-// RF21 va arriba (resumen), RF19 en medio (presupuesto general) y RF20 abajo (por categoría)
-// El RF22 (alertas por correo) lo hace el servidor: server/src/modulos/presupuesto/presupuesto.alertas.ts
+// Presupuesto familiar (RF019 a RF022)
 
-interface Miembro {
+type Estado = 'ok' | 'cerca' | 'excedido';
+interface CategoriaPresupuesto { categoria_id: number; categoria: string; monto: number; gastado: number; disponible: number; estado: Estado }
+interface PresupuestoFila {
   id: number;
   nombre: string;
-  ingreso_base: number;
-  ingreso_registrado: number;
-  ingreso_mensual: number;
-}
-
-interface CategoriaPpto {
-  id: number;
-  nombre: string;
-  fijos: number;
-  promedio: number;
-  recomendado: number;
-  asignado: number;
-  gastado: number;
-}
-
-interface PresupuestoActual {
-  id: number;
   monto_total: number;
-  umbral_alerta: number;
+  desde: string;
+  hasta: string;
   gastado: number;
   disponible: number;
-  porcentaje_usado: number;
-  asignado_total: number;
-  sin_asignar: number;
+  estado: Estado;
+  categorias: CategoriaPresupuesto[];
 }
+interface Opcion { id: number | string; nombre: string }
+interface FilaCategoria { categoria_id: string; monto: string }
 
-interface RespuestaPresupuesto {
-  mes: string;
-  periodo: string;
-  es_admin: boolean;
-  ingreso_total: number;
-  gastos_fijos_total: number;
-  miembros: Miembro[];
-  presupuesto: PresupuestoActual | null;
-  categorias: CategoriaPpto[];
-}
+const vacio = () => ({ nombre: '', monto_total: '', desde: inicioMes(), hasta: finMes() });
 
-const formatoMoneda = (monto: number) =>
-  new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(monto);
-
-const mesActual = () => {
-  const hoy = new Date();
-  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+const textoEstado: Record<Estado, string> = {
+  ok: 'Dentro del límite',
+  cerca: 'Cerca del límite',
+  excedido: 'Límite superado',
 };
 
-// verde normal, naranja cuando llega al porcentaje de alerta y rojo cuando se pasa
-const colorEstado = (porcentaje: number, umbral: number) => {
-  if (porcentaje >= 100) return '#dc2626';
-  if (porcentaje >= umbral) return '#f59e0b';
-  return '#16a34a';
-};
-
-const URL_API = 'http://localhost:4000/api/presupuesto';
-
-export const Presupuesto = ({ token }: { token: string }) => {
-  const [mes, setMes] = useState(mesActual);
-  const [datos, setDatos] = useState<RespuestaPresupuesto | null>(null);
-  const [montoTotal, setMontoTotal] = useState('');
-  const [umbral, setUmbral] = useState('80');
-  const [asignaciones, setAsignaciones] = useState<Record<number, string>>({});
+export const Presupuesto: FC<{ permisos: string[] }> = ({ permisos }) => {
+  const { errores, aviso, limpiar, fallar, exito } = useAvisos();
+  const [presupuestos, setPresupuestos] = useState<PresupuestoFila[]>([]);
+  const [categorias, setCategorias] = useState<Opcion[]>([]);
+  const [formulario, setFormulario] = useState(vacio);
+  const [filas, setFilas] = useState<FilaCategoria[]>([]);
+  const [editando, setEditando] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
-  const [guardandoGeneral, setGuardandoGeneral] = useState(false);
-  const [guardandoCategorias, setGuardandoCategorias] = useState(false);
-  const [error, setError] = useState('');
-  const [aviso, setAviso] = useState('');
+  const puedeGestionar = permisos.includes('presupuesto.gestionar');
 
-  const cargar = useCallback(
-    async (mesConsulta: string) => {
-      try {
-        const res = await fetch(`${URL_API}?mes=${encodeURIComponent(mesConsulta)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const respuesta = await res.json();
-        if (!res.ok) throw new Error(respuesta.error || 'No se pudo consultar el presupuesto.');
-
-        const r = respuesta as RespuestaPresupuesto;
-        setDatos(r);
-        // si no hay presupuesto, se sugiere la suma de ingresos de la familia
-        setMontoTotal(r.presupuesto ? String(r.presupuesto.monto_total) : r.ingreso_total > 0 ? String(r.ingreso_total) : '');
-        setUmbral(String(r.presupuesto?.umbral_alerta ?? 80));
-        setAsignaciones(
-          Object.fromEntries(r.categorias.map((c) => [c.id, c.asignado > 0 ? String(c.asignado) : '']))
-        );
-        setError('');
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo consultar el presupuesto.');
-      } finally {
-        setCargando(false);
-      }
-    },
-    [token]
-  );
+  const cargar = useCallback(async () => {
+    try {
+      const r = await pedir('/api/presupuestos');
+      setPresupuestos(r.presupuestos);
+    } catch (err) {
+      fallar(err);
+    } finally {
+      setCargando(false);
+    }
+  }, [fallar]);
 
   useEffect(() => {
-    void Promise.resolve().then(() => cargar(mes));
-  }, [cargar, mes]);
+    void Promise.resolve().then(cargar);
+    pedir('/api/gastos/catalogos').then((r) => setCategorias(r.categorias)).catch(fallar);
+  }, [cargar, fallar]);
 
-  const cambiarMes = (nuevoMes: string) => {
-    if (!nuevoMes) return;
-    setCargando(true);
-    setAviso('');
-    setMes(nuevoMes);
+  const cancelar = () => {
+    setEditando(null);
+    setFormulario(vacio());
+    setFilas([]);
   };
 
-  // RF19_ Guardar el presupuesto general del mes
-  const enviarPresupuesto = async (monto: string) => {
-    setGuardandoGeneral(true);
-    setError('');
-    setAviso('');
+  const guardar = async (evento: FormEvent) => {
+    evento.preventDefault();
+    limpiar();
     try {
-      const res = await fetch(URL_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ mes, monto_total: monto, umbral_alerta: umbral }),
+      await pedir(`/api/presupuestos${editando ? `/${editando}` : ''}`, {
+        metodo: editando ? 'PUT' : 'POST',
+        cuerpo: { ...formulario, categorias: filas },
       });
-      const respuesta = await res.json();
-      if (!res.ok) throw new Error(respuesta.error || 'No se pudo guardar el presupuesto.');
-      setAviso(respuesta.message);
-      await cargar(mes);
+      exito(editando ? 'Presupuesto actualizado.' : 'Presupuesto creado.');
+      cancelar();
+      await cargar();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo guardar el presupuesto.');
-    } finally {
-      setGuardandoGeneral(false);
+      fallar(err);
     }
   };
 
-  const guardarPresupuesto = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void enviarPresupuesto(montoTotal);
+  const editar = (p: PresupuestoFila) => {
+    limpiar();
+    setEditando(p.id);
+    setFormulario({ nombre: p.nombre, monto_total: String(p.monto_total), desde: p.desde, hasta: p.hasta });
+    setFilas(p.categorias.map((c) => ({ categoria_id: String(c.categoria_id), monto: String(c.monto) })));
   };
 
-  // RF19_ Poner como presupuesto la suma actual de ingresos de la familia
-  const usarIngresosComoPresupuesto = () => {
-    if (datos) void enviarPresupuesto(String(datos.ingreso_total));
-  };
-
-  // RF20_ Poner en cada categoría el monto recomendado
-  const usarRecomendado = () => {
-    if (!datos) return;
-    setAsignaciones(
-      Object.fromEntries(datos.categorias.map((c) => [c.id, c.recomendado > 0 ? String(c.recomendado) : '']))
-    );
-  };
-
-  // RF20_ Guardar el presupuesto por categoría
-  const guardarCategorias = async () => {
-    if (!datos?.presupuesto) return;
-    setGuardandoCategorias(true);
-    setError('');
-    setAviso('');
+  const eliminar = async (id: number) => {
+    if (!window.confirm('¿Quieres eliminar este presupuesto?')) return;
+    limpiar();
     try {
-      const res = await fetch(`${URL_API}/${datos.presupuesto.id}/categorias`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          categorias: datos.categorias.map((c) => ({ categoria_id: c.id, monto_asignado: asignaciones[c.id] ?? '' })),
-        }),
-      });
-      const respuesta = await res.json();
-      if (!res.ok) throw new Error(respuesta.error || 'No se pudo guardar el presupuesto por categoría.');
-      setAviso(respuesta.message);
-      await cargar(mes);
+      await pedir(`/api/presupuestos/${id}`, { metodo: 'DELETE' });
+      exito('Presupuesto eliminado.');
+      if (editando === id) cancelar();
+      await cargar();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo guardar el presupuesto por categoría.');
-    } finally {
-      setGuardandoCategorias(false);
+      fallar(err);
     }
   };
 
-  if (cargando && !datos) return <p className="ppto-cargando">Cargando presupuesto...</p>;
-
-  const ppto = datos?.presupuesto ?? null;
-  const esAdmin = Boolean(datos?.es_admin);
-  const sumaAsignada = (datos?.categorias ?? []).reduce((total, c) => total + (Number(asignaciones[c.id]) || 0), 0);
-  const sumaRecomendada = (datos?.categorias ?? []).reduce((total, c) => total + c.recomendado, 0);
-  const restante = ppto ? Math.round((ppto.monto_total - sumaAsignada) * 100) / 100 : 0;
-  const color = ppto ? colorEstado(ppto.porcentaje_usado, ppto.umbral_alerta) : '#16a34a';
-  const difiereDeIngresos = Boolean(ppto && datos && Math.abs(ppto.monto_total - datos.ingreso_total) > 0.009);
-  const sobraGastosFijos = datos ? datos.ingreso_total - datos.gastos_fijos_total : 0;
+  const cambiarFila = (indice: number, cambio: Partial<FilaCategoria>) =>
+    setFilas(filas.map((f, i) => (i === indice ? { ...f, ...cambio } : f)));
 
   return (
-    <div className="ppto">
-      <div className="ppto-encabezado">
-        <div>
-          <h2>💰 Presupuesto familiar</h2>
-          <p>Controla cuánto puede gastar la familia en el mes.</p>
-        </div>
-        <label className="ppto-mes">
-          Mes
-          <input type="month" value={mes} onChange={(e) => cambiarMes(e.target.value)} />
-        </label>
-      </div>
+    <section className="modulo">
+      <Encabezado titulo="Presupuesto familiar" descripcion="Define límites de gasto y revisa cuánto queda disponible." icono="◔" />
+      <Avisos errores={errores} aviso={aviso} />
 
-      {error && <div className="ppto-mensaje ppto-mensaje--error">{error}</div>}
-      {aviso && <div className="ppto-mensaje ppto-mensaje--ok">{aviso}</div>}
+      {puedeGestionar && (
+        <form className="modulo-formulario" onSubmit={guardar} noValidate>
+          <h4>{editando ? 'Editar presupuesto' : 'Crear presupuesto'}</h4>
+          <div className="modulo-campos">
+            <label>
+              Nombre
+              <input type="text" maxLength={100} placeholder="Ej. Gastos de noviembre" value={formulario.nombre}
+                onChange={(e) => setFormulario({ ...formulario, nombre: e.target.value })} />
+            </label>
+            <label>
+              Monto total
+              <input type="number" min="0.01" step="0.01" placeholder="0.00" value={formulario.monto_total}
+                onChange={(e) => setFormulario({ ...formulario, monto_total: e.target.value })} />
+            </label>
+            <label>
+              Desde
+              <CampoFecha value={formulario.desde} onChange={(valor) => setFormulario({ ...formulario, desde: valor })} />
+            </label>
+            <label>
+              Hasta
+              <CampoFecha value={formulario.hasta} onChange={(valor) => setFormulario({ ...formulario, hasta: valor })} />
+            </label>
+          </div>
 
-      {datos && (
-        <>
-          {/* RF21_ Consulta del presupuesto disponible: arriba para verlo apenas se entra */}
-          <section className="ppto-tarjeta">
-            <h3>📊 Presupuesto disponible de {datos.periodo}</h3>
-            {!ppto ? (
-              <p className="ppto-nota">
-                Todavía no hay presupuesto para este mes.
-                {esAdmin ? ' Créalo en la sección de abajo.' : ' El administrador debe crearlo.'}
-              </p>
-            ) : (
-              <>
-                {ppto.porcentaje_usado >= 100 && (
-                  <div className="ppto-alerta ppto-alerta--roja">🚨 Superaron el presupuesto del mes.</div>
-                )}
-                {ppto.porcentaje_usado >= ppto.umbral_alerta && ppto.porcentaje_usado < 100 && (
-                  <div className="ppto-alerta ppto-alerta--naranja">
-                    ⚠️ Ya se usó el {ppto.porcentaje_usado}% del presupuesto, está por agotarse.
-                  </div>
-                )}
-
-                {difiereDeIngresos && datos && (
-                  <div className="ppto-alerta ppto-alerta--naranja">
-                    Los ingresos de la familia este mes suman {formatoMoneda(datos.ingreso_total)}, pero el presupuesto
-                    guardado es de {formatoMoneda(ppto.monto_total)}.{' '}
-                    {esAdmin ? (
-                      <button type="button" onClick={usarIngresosComoPresupuesto} disabled={guardandoGeneral}>
-                        Usar {formatoMoneda(datos.ingreso_total)} como presupuesto
-                      </button>
-                    ) : (
-                      'El administrador puede actualizarlo.'
-                    )}
-                  </div>
-                )}
-
-                <div className="ppto-resumen">
-                  <div
-                    className="ppto-dona"
-                    style={{ background: `conic-gradient(${color} ${Math.min(100, ppto.porcentaje_usado)}%, #e2e8f0 0)` }}
-                  >
-                    <div className="ppto-dona-centro">
-                      <strong>{ppto.porcentaje_usado}%</strong>
-                      <span>usado</span>
-                    </div>
-                  </div>
-
-                  <div className="ppto-datos">
-                    <div className="ppto-dato">
-                      <span>Presupuesto</span>
-                      <strong>{formatoMoneda(ppto.monto_total)}</strong>
-                    </div>
-                    <div className="ppto-dato">
-                      <span>Gastado</span>
-                      <strong style={{ color }}>{formatoMoneda(ppto.gastado)}</strong>
-                    </div>
-                    <div className="ppto-dato">
-                      <span>{ppto.disponible < 0 ? 'Excedido' : 'Disponible'}</span>
-                      <strong style={{ color: ppto.disponible < 0 ? '#dc2626' : '#16a34a' }}>
-                        {formatoMoneda(Math.abs(ppto.disponible))}
-                      </strong>
-                    </div>
-                    <div className="ppto-dato">
-                      <span>Sin asignar a categorías</span>
-                      <strong>{formatoMoneda(ppto.sin_asignar)}</strong>
-                    </div>
-                  </div>
-                </div>
-                <p className="ppto-nota">
-                  💡 Lo que está “sin asignar” no tiene categoría definida, así que puede usarse para otros gastos o
-                  para ahorro.
-                </p>
-              </>
-            )}
-          </section>
-
-          {/* RF19_ Creación de presupuesto */}
-          <section className="ppto-tarjeta">
-            <h3>🧾 Presupuesto general</h3>
-            <div className="ppto-total-ingresos">
-              <span>Suma de los ingresos mensuales de la familia</span>
-              <strong>{formatoMoneda(datos.ingreso_total)}</strong>
+          {filas.map((fila, i) => (
+            <div className="modulo-fila" key={i}>
+              <label>
+                Categoría
+                <select value={fila.categoria_id} onChange={(e) => cambiarFila(i, { categoria_id: e.target.value })}>
+                  <option value="">Selecciona…</option>
+                  {categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              </label>
+              <label>
+                Monto asignado
+                <input type="number" min="0.01" step="0.01" value={fila.monto} onChange={(e) => cambiarFila(i, { monto: e.target.value })} />
+              </label>
+              <button type="button" className="modulo-boton" onClick={() => setFilas(filas.filter((_, j) => j !== i))}>Quitar</button>
             </div>
+          ))}
 
-            {datos.miembros.length > 0 && (
-              <ul className="ppto-miembros">
-                {datos.miembros.map((m) => (
-                  <li key={m.id}>
-                    <span>
-                      {m.nombre}
-                      <small>
-                        {' '}
-                        (base {formatoMoneda(m.ingreso_base)} + registrado este mes {formatoMoneda(m.ingreso_registrado)})
-                      </small>
-                    </span>
-                    <span>{formatoMoneda(m.ingreso_mensual)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <p className="ppto-nota">
-              Incluye el ingreso principal del cuestionario de cada integrante más los ingresos que registró este mes.
-            </p>
-
-            <p className="ppto-leyenda">
-              Es necesario cubrir los gastos obligados (gastos fijos) de la familia, que suman{' '}
-              <strong>{formatoMoneda(datos.gastos_fijos_total)}</strong> al mes.
-              {datos.ingreso_total > 0 &&
-                (sobraGastosFijos >= 0 ? (
-                  <> Con los ingresos actuales les quedarían {formatoMoneda(sobraGastosFijos)} para otros gastos y ahorro.</>
-                ) : (
-                  <> Los ingresos actuales no alcanzan, faltarían {formatoMoneda(Math.abs(sobraGastosFijos))}.</>
-                ))}
-            </p>
-
-            {esAdmin ? (
-              <form className="ppto-formulario" onSubmit={guardarPresupuesto}>
-                <label>
-                  Presupuesto total del mes
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={montoTotal}
-                    onChange={(e) => setMontoTotal(e.target.value)}
-                    placeholder="Ej. 15000"
-                    required
-                  />
-                </label>
-                <label>
-                  Avisar al llegar a (%)
-                  <input
-                    type="number"
-                    min="1"
-                    max="100"
-                    value={umbral}
-                    onChange={(e) => setUmbral(e.target.value)}
-                    required
-                  />
-                </label>
-                <button type="submit" disabled={guardandoGeneral}>
-                  {guardandoGeneral ? 'Guardando...' : ppto ? 'Actualizar presupuesto' : 'Crear presupuesto'}
-                </button>
-              </form>
-            ) : (
-              <p className="ppto-nota">Solo el administrador puede crear o cambiar el presupuesto.</p>
-            )}
-          </section>
-
-          {/* RF20_ Asignación de presupuesto por categoría */}
-          <section className="ppto-tarjeta">
-            <h3>🗂️ Presupuesto por categoría</h3>
-            {!ppto ? (
-              <p className="ppto-nota">Primero crea el presupuesto general para poder repartirlo por categoría.</p>
-            ) : (
-              <>
-                <p className="ppto-leyenda">
-                  Recomendación: para cubrir lo de todos los integrantes se necesitan{' '}
-                  <strong>{formatoMoneda(sumaRecomendada)}</strong> al mes entre todas las categorías (según los gastos
-                  fijos y el promedio de los últimos 3 meses).
-                </p>
-
-                <div className="ppto-categorias">
-                  {datos.categorias.map((c) => {
-                    const asignado = Number(asignaciones[c.id]) || 0;
-                    const porcentaje = asignado > 0 ? (c.gastado / asignado) * 100 : c.gastado > 0 ? 100 : 0;
-                    const colorCat = asignado > 0 ? colorEstado(porcentaje, ppto.umbral_alerta) : '#94a3b8';
-                    return (
-                      <div className="ppto-categoria" key={c.id}>
-                        <div className="ppto-categoria-fila">
-                          <strong>{c.nombre}</strong>
-                          {esAdmin ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={asignaciones[c.id] ?? ''}
-                              onChange={(e) => setAsignaciones({ ...asignaciones, [c.id]: e.target.value })}
-                              placeholder="0.00"
-                            />
-                          ) : (
-                            <span>{formatoMoneda(c.asignado)}</span>
-                          )}
-                        </div>
-                        <div className="ppto-barra">
-                          <div style={{ width: `${Math.min(100, porcentaje)}%`, background: colorCat }} />
-                        </div>
-                        <small>
-                          Gastado {formatoMoneda(c.gastado)}
-                          {asignado > 0 ? ` de ${formatoMoneda(asignado)}` : ' (sin presupuesto asignado)'}
-                          {' · '}Recomendado {c.recomendado > 0 ? formatoMoneda(c.recomendado) : 'sin datos aún'}
-                          {c.fijos > 0 && ` (gastos fijos ${formatoMoneda(c.fijos)})`}
-                        </small>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <p className={restante < 0 ? 'ppto-restante ppto-restante--mal' : 'ppto-restante'}>
-                  {restante < 0
-                    ? `Te pasas del presupuesto por ${formatoMoneda(Math.abs(restante))}.`
-                    : `Falta repartir ${formatoMoneda(restante)} del presupuesto.`}
-                </p>
-
-                {esAdmin && (
-                  <div className="ppto-botones">
-                    <button type="button" className="ppto-secundario" onClick={usarRecomendado}>
-                      Usar recomendado
-                    </button>
-                    <button type="button" onClick={guardarCategorias} disabled={guardandoCategorias || restante < 0}>
-                      {guardandoCategorias ? 'Guardando...' : 'Guardar por categoría'}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
-        </>
+          <div className="modulo-acciones-formulario">
+            <button type="button" className="modulo-boton" onClick={() => setFilas([...filas, { categoria_id: '', monto: '' }])}>Asignar a categoría</button>
+            <button type="submit" className="modulo-boton modulo-boton--primario">{editando ? 'Guardar cambios' : 'Crear presupuesto'}</button>
+            {editando && <button type="button" className="modulo-boton" onClick={cancelar}>Cancelar</button>}
+          </div>
+        </form>
       )}
-    </div>
+
+      {cargando ? (
+        <p className="modulo-vacio">Cargando presupuestos…</p>
+      ) : presupuestos.length === 0 ? (
+        <p className="modulo-vacio">Todavía no hay presupuestos.</p>
+      ) : (
+        presupuestos.map((p) => (
+          <article className="modulo-consulta" key={p.id}>
+            <div className="modulo-tarjeta-titulo">
+              <div>
+                <h4>{p.nombre}</h4>
+                <p className="modulo-nota">{fechaVisible(p.desde)} al {fechaVisible(p.hasta)}</p>
+              </div>
+              <span className={`modulo-estado modulo-estado--${p.estado}`}>{textoEstado[p.estado]}</span>
+            </div>
+            {p.estado !== 'ok' && (
+              <p className="modulo-mensaje modulo-mensaje--alerta" role="alert">
+                {p.estado === 'excedido' ? 'Este presupuesto ya superó su límite.' : 'Este presupuesto está cerca de su límite.'}
+              </p>
+            )}
+            <div className="modulo-resumen">
+              <div><span>Presupuesto</span><strong>{moneda(p.monto_total)}</strong></div>
+              <div><span>Utilizado</span><strong>{moneda(p.gastado)}</strong></div>
+              <div><span>Disponible</span><strong>{moneda(p.disponible)}</strong></div>
+            </div>
+            <Barra etiqueta="Uso total" detalle={`${moneda(p.gastado)} de ${moneda(p.monto_total)}`} valor={p.gastado} maximo={p.monto_total} estado={p.estado} />
+            {p.categorias.map((c) => (
+              <Barra key={c.categoria_id} etiqueta={c.categoria} detalle={`${moneda(c.gastado)} de ${moneda(c.monto)}`} valor={c.gastado} maximo={c.monto} estado={c.estado} />
+            ))}
+            {puedeGestionar && (
+              <div className="modulo-acciones">
+                <button type="button" onClick={() => editar(p)}>Editar</button>
+                <button type="button" className="modulo-eliminar" onClick={() => void eliminar(p.id)}>Eliminar</button>
+              </div>
+            )}
+          </article>
+        ))
+      )}
+    </section>
   );
 };

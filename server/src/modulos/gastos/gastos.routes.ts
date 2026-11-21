@@ -1,13 +1,15 @@
-import express, { Response } from 'express';
+import { Router, Response } from 'express';
 import { pool } from '../../db';
 import { PeticionGastos, cargarContexto, exigirPermiso } from './gastos.permisos';
 import { validarGasto, leerPeriodo, leerId } from './gastos.validaciones';
-import { enviarAlertasPresupuesto } from '../presupuesto/presupuesto.alertas';
+import { METODOS_PAGO, metodoPorCodigo, metodoPorId } from '../../catalogos';
 
-const router = express.Router();
+const router = Router();
 
+// RNF04_ todas las rutas de gastos pasan primero por aqui para saber la familia y el rol
 router.use(cargarContexto);
 
+// errores que manda la base de datos (triggers y checks de famify_db.sql)
 const responderError = (res: Response, err: any, accion: string) => {
   console.error(`❌ Error al ${accion}:`, err.message);
   if (err.code === '42501') {
@@ -22,32 +24,31 @@ const responderError = (res: Response, err: any, accion: string) => {
   return res.status(500).json({ error: 'Ocurrió un problema en el servidor. Intenta de nuevo.' });
 };
 
-// RF15_ y RF16_ Catálogos adaptados a famify_db.sql
+// RF15_ y RF16_ Listas para los menus de categoría y método de pago
 router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   const { familiaId } = req.contexto!;
   try {
-    const categorias = await pool.query(
-      `SELECT id, nombre FROM categoria_de_los_gastos
-        WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
-        ORDER BY nombre`,
-      [familiaId]
-    );
-
-    // Mapeo alineado al CHECK de la tabla `gastos` en famify_db.sql
-    const metodosEstaticos = [
-      { id: 'efectivo', nombre: 'Efectivo', es_credito: false },
-      { id: 'tarjeta_debito', nombre: 'Tarjeta de Débito', es_credito: false },
-      { id: 'tarjeta_credito', nombre: 'Tarjeta de Crédito', es_credito: true },
-      { id: 'otro', nombre: 'Otro', es_credito: false }
-    ];
-
-    return res.json({ success: true, categorias: categorias.rows, metodos_pago: metodosEstaticos });
+    const [categorias, metodos] = await Promise.all([
+      pool.query(
+        `SELECT id, nombre FROM categoria_de_los_gastos
+          WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
+          ORDER BY nombre`,
+        [familiaId]
+      ),
+      // los métodos de pago son valores fijos de la base de datos (CHECK en gastos.metodo_de_pago)
+      Promise.resolve(METODOS_PAGO.map(({ id, nombre, es_credito }) => ({ id, nombre, es_credito }))),
+    ]);
+    return res.json({
+      success: true,
+      categorias: categorias.rows.map((c: any) => ({ id: Number(c.id), nombre: c.nombre })),
+      metodos_pago: metodos,
+    });
   } catch (err: any) {
     return responderError(res, err, 'consultar catálogos');
   }
 });
 
-// RF13_ Registro de gastos
+// RF13_ Registro de gastos (administrador e integrante, cada quien registra el suyo)
 router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId, familiaId } = req.contexto!;
   const { errores, datos } = validarGasto(req.body);
@@ -55,22 +56,17 @@ router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, 
   if (errores.length > 0) {
     return res.status(400).json({ error: errores.join(' '), errores });
   }
-
-  // Si envían un ID numérico de método de pago, se asigna 'efectivo' como predeterminado para cumplir el CHECK
-  const metodoPago = typeof datos.metodo_pago_id === 'string' ? datos.metodo_pago_id : 'efectivo';
-
-  const antesDelGasto = new Date();
+  const metodo = metodoPorId(datos.metodo_pago_id);
+  if (!metodo) return res.status(400).json({ error: 'Selecciona un método de pago válido.' });
 
   try {
     const r = await pool.query(
       `INSERT INTO gastos (familia_id, usuario_id, categoria_id, metodo_de_pago, monto, fecha, descripcion)
-       VALUES ($1::bigint, $2::bigint, $3::bigint, $4::varchar, $5::numeric,
+       VALUES ($1::bigint, $2::bigint, $3::bigint, $4::text, $5::numeric,
                COALESCE($6::date, current_date), $7)
        RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
-      [familiaId, usuarioId, datos.categoria_id, metodoPago, datos.monto, datos.fecha, datos.descripcion]
+      [familiaId, usuarioId, datos.categoria_id, metodo.codigo, datos.monto, datos.fecha, datos.descripcion]
     );
-    // RF22_ Si el gasto hizo que se llegara al límite del presupuesto, se manda el correo de alerta
-    void enviarAlertasPresupuesto(familiaId, antesDelGasto);
     return res.status(201).json({ success: true, message: 'Gasto registrado con éxito.', gasto: r.rows[0] });
   } catch (err: any) {
     return responderError(res, err, 'registrar el gasto');
@@ -78,6 +74,7 @@ router.post('/', exigirPermiso('gastos.registrar'), async (req: PeticionGastos, 
 });
 
 // RF14_ Edición de gastos
+// el administrador edita cualquiera de la familia, el integrante solo los suyos
 router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId, familiaId, esAdmin } = req.contexto!;
   const id = leerId(req.params.id);
@@ -87,8 +84,8 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
   if (errores.length > 0) {
     return res.status(400).json({ error: errores.join(' '), errores });
   }
-
-  const metodoPago = typeof datos.metodo_pago_id === 'string' ? datos.metodo_pago_id : 'efectivo';
+  const metodo = metodoPorId(datos.metodo_pago_id);
+  if (!metodo) return res.status(400).json({ error: 'Selecciona un método de pago válido.' });
 
   try {
     const gasto = await pool.query(
@@ -102,24 +99,21 @@ router.put('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, r
       return res.status(403).json({ error: 'Solo puedes modificar tus propios gastos.' });
     }
 
-    const antesDelGasto = new Date();
     const r = await pool.query(
       `UPDATE gastos
-          SET categoria_id = $3::bigint, metodo_de_pago = $4::varchar, monto = $5::numeric,
+          SET categoria_id = $3::bigint, metodo_de_pago = $4::text, monto = $5::numeric,
               fecha = COALESCE($6::date, fecha), descripcion = $7
         WHERE id = $1::bigint AND familia_id = $2::bigint
         RETURNING id, monto, to_char(fecha, 'YYYY-MM-DD') AS fecha`,
-      [id, familiaId, datos.categoria_id, metodoPago, datos.monto, datos.fecha, datos.descripcion]
+      [id, familiaId, datos.categoria_id, metodo.codigo, datos.monto, datos.fecha, datos.descripcion]
     );
-    // RF22_ Igual que al registrar: si el cambio llegó al límite, se avisa por correo
-    void enviarAlertasPresupuesto(familiaId, antesDelGasto);
     return res.json({ success: true, message: 'Gasto actualizado.', gasto: r.rows[0] });
   } catch (err: any) {
     return responderError(res, err, 'editar el gasto');
   }
 });
 
-// RF14_ Eliminación de gastos
+// RF14_ Eliminación de gastos (mismas reglas que la edición)
 router.delete('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos, res: Response) => {
   const { usuarioId, familiaId, esAdmin } = req.contexto!;
   const id = leerId(req.params.id);
@@ -144,9 +138,11 @@ router.delete('/:id', exigirPermiso('gastos.editar'), async (req: PeticionGastos
   }
 });
 
-// RF17_ Consulta de gastos por periodo (Usando g.metodo_de_pago)
+// RF17_ Consulta de gastos por periodo (lista con detalle)
+// administrador: todos los gastos de la familia (puede filtrar por integrante)
+// integrante: solo sus propios gastos
 router.get('/', async (req: PeticionGastos, res: Response) => {
-  const { usuarioId, familiaId, esAdmin } = req.contexto!;
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
 
   const periodo = leerPeriodo(req.query);
   if (periodo.error) return res.status(400).json({ error: periodo.error });
@@ -154,6 +150,7 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
   const pagina = Math.max(1, Number(req.query.pagina) || 1);
   const limite = Math.min(100, Math.max(1, Number(req.query.limite) || 20));
 
+  // $1 familia, $2 desde, $3 hasta (los demas filtros se van agregando)
   const valores: any[] = [familiaId, periodo.desde, periodo.hasta];
   const filtros = ['g.familia_id = $1::bigint', 'g.fecha BETWEEN $2::date AND $3::date'];
 
@@ -162,9 +159,10 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
     return res.status(400).json({ error: 'El integrante indicado no es válido.' });
   }
 
-  if (!esAdmin) {
+  if (!verDetalle) {
+    // sin el permiso gastos.ver_detalle no se ve el detalle de los demas
     if (usuarioFiltro && usuarioFiltro !== usuarioId) {
-      return res.status(403).json({ error: 'Solo el administrador puede ver el detalle de otros integrantes.' });
+      return res.status(403).json({ error: 'No tienes permiso para ver el detalle de otros integrantes.' });
     }
     valores.push(usuarioId);
     filtros.push(`g.usuario_id = $${valores.length}::bigint`);
@@ -173,6 +171,7 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
     filtros.push(`g.usuario_id = $${valores.length}::bigint`);
   }
 
+  // RF15_ filtro opcional por categoría
   if (req.query.categoria_id) {
     const cat = leerId(req.query.categoria_id);
     if (!cat) return res.status(400).json({ error: 'La categoría indicada no es válida.' });
@@ -188,7 +187,7 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
       pool.query(
         `SELECT g.id, to_char(g.fecha, 'YYYY-MM-DD') AS fecha, g.monto, g.descripcion,
                 g.categoria_id, c.nombre AS categoria,
-                g.metodo_de_pago AS metodo_pago,
+                g.metodo_de_pago,
                 g.usuario_id, u.nombre AS integrante
            FROM gastos g
            JOIN categoria_de_los_gastos c ON c.id = g.categoria_id
@@ -203,18 +202,127 @@ router.get('/', async (req: PeticionGastos, res: Response) => {
     return res.json({
       success: true,
       periodo: { desde: periodo.desde, hasta: periodo.hasta },
-      alcance: esAdmin ? 'familia' : 'personal',
+      alcance: verDetalle ? 'familia' : 'personal',
       total: totales.rows[0].total,
       cantidad: Number(totales.rows[0].cantidad),
       pagina,
       limite,
-      gastos: filas.rows.map((gasto: any) => ({
-        ...gasto,
-        es_mio: Number(gasto.usuario_id) === usuarioId,
-      })),
+      gastos: filas.rows.map(({ metodo_de_pago, ...gasto }: any) => {
+        const metodo = metodoPorCodigo(metodo_de_pago);
+        return {
+          ...gasto,
+          id: Number(gasto.id),
+          categoria_id: Number(gasto.categoria_id),
+          metodo_pago_id: metodo?.id ?? null,
+          metodo_pago: metodo?.nombre ?? metodo_de_pago,
+          usuario_id: Number(gasto.usuario_id),
+          es_mio: Number(gasto.usuario_id) === usuarioId,
+        };
+      }),
     });
   } catch (err: any) {
     return responderError(res, err, 'consultar los gastos');
+  }
+});
+
+// RF17_ Consulta de gastos por periodo (totales)
+// los dos roles ven el total general de la familia y el total propio
+// solo el administrador ve cuanto gastó cada integrante
+router.get('/resumen', exigirPermiso('reportes.ver'), async (req: PeticionGastos, res: Response) => {
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
+
+  const periodo = leerPeriodo(req.query);
+  if (periodo.error) return res.status(400).json({ error: periodo.error });
+
+  try {
+    const totales = await pool.query(
+      `SELECT COALESCE(sum(monto), 0) AS total_familia,
+              count(*) AS cantidad_familia,
+              COALESCE(sum(monto) FILTER (WHERE usuario_id = $4::bigint), 0) AS total_mio,
+              count(*) FILTER (WHERE usuario_id = $4::bigint) AS cantidad_mio
+         FROM gastos
+        WHERE familia_id = $1::bigint AND fecha BETWEEN $2::date AND $3::date`,
+      [familiaId, periodo.desde, periodo.hasta, usuarioId]
+    );
+    const t = totales.rows[0];
+
+    const respuesta: any = {
+      success: true,
+      periodo: { desde: periodo.desde, hasta: periodo.hasta },
+      familia: { total: t.total_familia, cantidad: Number(t.cantidad_familia) },
+      mio: { total: t.total_mio, cantidad: Number(t.cantidad_mio) },
+    };
+
+    if (verDetalle) {
+      const porIntegrante = await pool.query(
+        `SELECT u.id, u.nombre, sum(g.monto) AS total, count(*) AS cantidad
+           FROM gastos g JOIN usuario u ON u.id = g.usuario_id
+          WHERE g.familia_id = $1::bigint AND g.fecha BETWEEN $2::date AND $3::date
+          GROUP BY u.id, u.nombre
+          ORDER BY sum(g.monto) DESC`,
+        [familiaId, periodo.desde, periodo.hasta]
+      );
+      respuesta.por_integrante = porIntegrante.rows.map((f: any) => ({ ...f, cantidad: Number(f.cantidad) }));
+    }
+
+    return res.json(respuesta);
+  } catch (err: any) {
+    return responderError(res, err, 'consultar el resumen de gastos');
+  }
+});
+
+// RF18_ Consulta de gastos por categoría
+// alcance=familia (por defecto): general de la familia, sin nombres ni detalle
+// alcance=mio: solo mis gastos
+// usuario_id=X: solo lo puede usar el administrador para ver a un integrante
+router.get('/por-categoria', exigirPermiso('reportes.ver'), async (req: PeticionGastos, res: Response) => {
+  const { usuarioId, familiaId, verDetalle } = req.contexto!;
+
+  const periodo = leerPeriodo(req.query);
+  if (periodo.error) return res.status(400).json({ error: periodo.error });
+
+  const usuarioFiltro = req.query.usuario_id ? leerId(req.query.usuario_id) : null;
+  if (req.query.usuario_id && !usuarioFiltro) {
+    return res.status(400).json({ error: 'El integrante indicado no es válido.' });
+  }
+  if (!verDetalle && usuarioFiltro && usuarioFiltro !== usuarioId) {
+    return res.status(403).json({ error: 'No tienes permiso para ver el detalle de otros integrantes.' });
+  }
+
+  // si piden "mio" o un integrante en especifico, se filtra por usuario
+  const usuarioObjetivo = usuarioFiltro ?? (req.query.alcance === 'mio' ? usuarioId : null);
+
+  try {
+    let filas;
+    if (usuarioObjetivo === null) {
+      // general de la familia, se usa la función que ya está en la base de datos
+      filas = await pool.query(
+        'SELECT categoria_id, categoria, total, porcentaje FROM fn_gastos_por_categoria($1::bigint, $2::date, $3::date)',
+        [familiaId, periodo.desde, periodo.hasta]
+      );
+    } else {
+      filas = await pool.query(
+        `SELECT c.id AS categoria_id, c.nombre AS categoria, sum(g.monto) AS total,
+                round(100 * sum(g.monto) / NULLIF(sum(sum(g.monto)) OVER (), 0), 2) AS porcentaje
+           FROM gastos g JOIN categoria_de_los_gastos c ON c.id = g.categoria_id
+          WHERE g.familia_id = $1::bigint AND g.usuario_id = $4::bigint
+            AND g.fecha BETWEEN $2::date AND $3::date
+          GROUP BY c.id, c.nombre
+          ORDER BY sum(g.monto) DESC`,
+        [familiaId, periodo.desde, periodo.hasta, usuarioObjetivo]
+      );
+    }
+
+    const total = filas.rows.reduce((suma: number, f: any) => suma + Number(f.total), 0);
+    return res.json({
+      success: true,
+      periodo: { desde: periodo.desde, hasta: periodo.hasta },
+      alcance: usuarioObjetivo === null ? 'familia' : 'personal',
+      total: total.toFixed(2),
+      categorias: filas.rows,
+    });
+  } catch (err: any) {
+    return responderError(res, err, 'consultar gastos por categoría');
   }
 });
 

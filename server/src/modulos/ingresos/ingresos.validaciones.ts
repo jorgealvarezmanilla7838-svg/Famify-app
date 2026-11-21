@@ -29,7 +29,7 @@ export const validarIngreso = (body: any) => {
   let fecha: string | null = null;
   if (datos.fecha !== undefined && datos.fecha !== null && datos.fecha !== '') {
     if (!esFechaValida(datos.fecha)) {
-      errores.push('La fecha no es válida (usa el formato AAAA-MM-DD).');
+      errores.push('La fecha no es válida (escríbela como DD/MM/AAAA).');
     } else if (datos.fecha > fechaLocal(new Date())) {
       errores.push('La fecha del ingreso no puede ser futura.');
     } else {

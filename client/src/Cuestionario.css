@@ -44,7 +44,7 @@
 }
 
 .cuestionario-barra.activa {
-  background: #3498db;
+  background: #208653;
 }
 
 .cuestionario-paso {
@@ -81,8 +81,8 @@
 }
 
 .opcion.sel {
-  background: #3498db;
-  border-color: #3498db;
+  background: #208653;
+  border-color: #208653;
   color: #ffffff;
   font-weight: 600;
 }
@@ -104,8 +104,8 @@
 }
 
 .dia.sel {
-  background: #3498db;
-  border-color: #3498db;
+  background: #208653;
+  border-color: #208653;
   color: #ffffff;
   font-weight: 600;
 }
@@ -128,8 +128,8 @@
 }
 
 .metodo.sel {
-  border-color: #3498db;
-  background: #eaf4fc;
+  border-color: #208653;
+  background: #e2f5eb;
 }
 
 .fila-tarjeta {
@@ -156,16 +156,16 @@
 
 .chip {
   padding: 6px 12px;
-  border: 1px solid #3498db;
+  border: 1px solid #208653;
   border-radius: 16px;
   background: #ffffff;
-  color: #2471a3;
+  color: #176f43;
   font-size: 0.8rem;
   cursor: pointer;
 }
 
 .chip:hover {
-  background: #eaf4fc;
+  background: #e2f5eb;
 }
 
 .btn-link-chico {

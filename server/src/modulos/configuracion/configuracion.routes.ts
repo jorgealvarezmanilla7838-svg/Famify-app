@@ -1,84 +1,95 @@
-import express, { Response } from 'express';
-import { pool } from '../../db';
-import { PeticionGastos } from '../gastos/gastos.permisos';
-import { validarConfiguracion, type CatalogosValidacion } from './configuracion.validaciones';
-import { METODOS_PAGO, metodoPorId } from '../../catalogos';
+import { Router, type Response } from 'express';
+import { enTransaccion, pool } from '../../db';
+import { METODOS_PAGO, metodoPorCodigo, metodoPorId } from '../../catalogos';
+import { ErrorNegocio, responderError } from '../compartido/errores';
+import { type PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
+import { validarConfiguracion } from './configuracion.validaciones';
 
-const router = express.Router();
+const router = Router();
 
-// El cuestionario es del usuario (no necesita familia): se usa el id que viene en el token ya verificado
+router.use(cargarContexto);
+
 const SQL_CATEGORIAS = `
   SELECT id, nombre FROM categoria_de_los_gastos
-   WHERE activa AND (familia_id IS NULL
-                     OR familia_id = (SELECT familia_id FROM usuario WHERE id = $1::bigint))
+   WHERE activa AND (familia_id IS NULL OR familia_id = $1::bigint)
    ORDER BY nombre`;
 
-// errores que manda la base de datos (triggers y checks de famify_db.sql)
-const responderError = (res: Response, err: any, accion: string) => {
-  console.error(`❌ Error al ${accion}:`, err.message);
-  if (err.code === '42501') {
-    return res.status(403).json({ error: 'No tienes permiso para realizar esta acción.' });
-  }
-  if (err.code === 'P0001') {
-    return res.status(400).json({ error: err.message });
-  }
-  if (err.code === '23505') {
-    return res.status(400).json({ error: 'Tu configuración ya estaba guardada.' });
-  }
-  if (err.code === '23514' || err.code === '23503') {
-    return res.status(400).json({ error: 'Los datos no cumplen las reglas del sistema.' });
-  }
-  return res.status(500).json({ error: 'Ocurrió un problema en el servidor. Intenta de nuevo.' });
-};
-
-// Listas para el menú del cuestionario (RF06 métodos de pago y RF08 categorías)
+// RF06_ / RF08_ Listas para el menú de métodos de pago y las categorías de gastos fijos
+// Los métodos de pago son valores fijos de la base de datos (ver catalogos.ts)
 router.get('/catalogos', async (req: PeticionGastos, res: Response) => {
   try {
-    const categorias = await pool.query(SQL_CATEGORIAS, [req.user?.id]);
+    const categorias = await pool.query(SQL_CATEGORIAS, [req.contexto!.familiaId]);
     return res.json({
       success: true,
       metodos_pago: METODOS_PAGO.map(({ id, nombre, es_credito }) => ({ id, nombre, es_credito })),
-      categorias: categorias.rows.map((c) => ({ id: Number(c.id), nombre: c.nombre })),
+      categorias: categorias.rows.map((c: any) => ({ id: Number(c.id), nombre: c.nombre })),
     });
   } catch (err: any) {
-    return responderError(res, err, 'cargar los catálogos del cuestionario');
+    return responderError(res, err, 'consultar catálogos de configuración');
   }
 });
 
-// Configuración que ya tiene guardada el usuario (RF05 a RF08)
+// Devuelve la configuración guardada para poder editarla (todo vive en configuracion_financiera)
 router.get('/', async (req: PeticionGastos, res: Response) => {
+  const { usuarioId } = req.contexto!;
   try {
     const r = await pool.query(
       `SELECT u.recibe_sueldo, u.perfil_completo,
-              c.ingreso_principal,
-              (c.ingresos_secundarios IS NOT NULL) AS tiene_ingresos_secundarios,
-              c.dias_de_ingreso AS dias_ingreso,
-              COALESCE(c.metodos_de_pago, '{}') AS metodos_de_pago,
-              c.dia_de_corte,
-              EXTRACT(day FROM c.fecha_limite_de_pago)::int AS dia_limite_pago,
-              COALESCE(c.gastos_fijos, '[]'::jsonb) AS gastos_fijos
+              cf.ingreso_principal, cf.ingresos_secundarios, cf.dias_de_ingreso,
+              cf.metodos_de_pago, cf.dia_de_corte,
+              EXTRACT(day FROM cf.fecha_limite_de_pago)::int AS dia_limite_pago,
+              cf.gastos_fijos
          FROM usuario u
-         LEFT JOIN configuracion_financiera c ON c.usuario_id = u.id
+         LEFT JOIN configuracion_financiera cf ON cf.usuario_id = u.id
         WHERE u.id = $1::bigint`,
-      [req.user?.id]
+      [usuarioId]
     );
-    return res.json({ success: true, configuracion: r.rows[0] || null });
+    if (r.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+
+    const f = r.rows[0];
+    const metodos = ((f.metodos_de_pago ?? []) as string[])
+      .map((codigo) => metodoPorCodigo(codigo))
+      .filter((m): m is NonNullable<typeof m> => Boolean(m))
+      .map((m) => ({
+        metodo_pago_id: m.id,
+        nombre: m.nombre,
+        alias: m.es_credito ? 'Principal' : null,
+        dia_corte: m.es_credito ? f.dia_de_corte : null,
+        dia_limite_pago: m.es_credito ? f.dia_limite_pago : null,
+      }));
+
+    return res.json({
+      success: true,
+      configuracion: {
+        recibe_sueldo: f.recibe_sueldo,
+        ingreso_principal: f.ingreso_principal,
+        tiene_ingresos_secundarios: f.ingresos_secundarios !== null && f.ingresos_secundarios !== undefined,
+        dias_ingreso: f.dias_de_ingreso,
+        perfil_completo: f.perfil_completo,
+      },
+      metodos_pago: metodos,
+      gastos_fijos: Array.isArray(f.gastos_fijos) ? f.gastos_fijos : [],
+    });
   } catch (err: any) {
     return responderError(res, err, 'consultar la configuración');
   }
 });
 
-// RF05 a RF08: guarda todo el cuestionario y marca el perfil como completo (RF04)
-// RNF15_ todo en una sola transacción: o se guarda todo o no se guarda nada
-router.post('/completar', async (req: PeticionGastos, res: Response) => {
-  const usuarioId = Number(req.user?.id);
+// RF05_ a RF08_ Guarda toda la configuración en una transacción (RNF15).
+// Al completar el registro solo se admite una vez; después se usa la edición.
+const guardarConfiguracion = async (req: PeticionGastos, res: Response, soloPrimeraVez: boolean) => {
+  const { usuarioId, familiaId } = req.contexto!;
 
-  let catalogos: CatalogosValidacion;
+  let catalogos;
   try {
-    const categorias = await pool.query(SQL_CATEGORIAS, [usuarioId]);
+    const categorias = await pool.query(SQL_CATEGORIAS, [familiaId]);
     catalogos = {
-      metodos: new Map(METODOS_PAGO.map((m) => [m.id, { nombre: m.nombre, es_credito: m.es_credito }])),
-      categorias: new Set<number>(categorias.rows.map((c) => Number(c.id))),
+      metodos: new Map<number, { nombre: string; es_credito: boolean }>(
+        METODOS_PAGO.map((m) => [m.id, { nombre: m.nombre, es_credito: m.es_credito }])
+      ),
+      categorias: new Set<number>(categorias.rows.map((c: any) => Number(c.id))),
     };
   } catch (err: any) {
     return responderError(res, err, 'validar el cuestionario');
@@ -89,44 +100,45 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
     return res.status(400).json({ error: errores.join(' '), errores });
   }
 
-  // La base de datos guarda los métodos como texto (efectivo, tarjeta_credito...) y una sola tarjeta de crédito
+  // La base guarda los métodos como texto y una sola tarjeta de crédito (día de corte y límite de pago)
   const codigos = datos.metodos.map((m) => metodoPorId(m.metodo_pago_id)!.codigo);
   const credito = datos.metodos.find((m) => metodoPorId(m.metodo_pago_id)?.es_credito);
 
-  const cliente = await pool.connect();
-  let yaCompleto = false;
   try {
-    await cliente.query('BEGIN');
+    await enTransaccion(async (cliente) => {
+      const actual = await cliente.query('SELECT perfil_completo FROM usuario WHERE id = $1::bigint AND activo FOR UPDATE', [
+        usuarioId,
+      ]);
+      if (actual.rows.length === 0) throw new ErrorNegocio(404, 'Usuario no encontrado o inactivo.');
+      if (soloPrimeraVez && actual.rows[0].perfil_completo === true) {
+        throw new ErrorNegocio(409, 'Tu perfil ya estaba completo.');
+      }
 
-    const actual = await cliente.query(
-      'SELECT perfil_completo FROM usuario WHERE id = $1::bigint AND activo FOR UPDATE',
-      [usuarioId]
-    );
-    if (actual.rows.length === 0) {
-      await cliente.query('ROLLBACK');
-      return res.status(403).json({ error: 'Usuario no válido.' });
-    }
-    if (actual.rows[0].perfil_completo === true) {
-      yaCompleto = true;
-      await cliente.query('ROLLBACK');
-    } else {
       // RF05_ el permiso de registrar ingresos depende de recibe_sueldo (fn_tiene_permiso)
       await cliente.query('UPDATE usuario SET recibe_sueldo = $2::boolean WHERE id = $1::bigint', [
         usuarioId,
         datos.recibe_sueldo,
       ]);
 
-      // RF05 a RF08_ todo el perfil financiero va en una sola fila (RNF07_ nunca se guarda número de tarjeta)
-      // fecha_limite_de_pago es una fecha: se guarda la próxima fecha con ese día del mes
-      // el trigger trg_perfil_completo marca usuario.perfil_completo = true al insertar (RF04)
+      // RF05 a RF08_ Todo el perfil financiero va en una sola fila. fecha_limite_de_pago es una fecha:
+      // se guarda la próxima fecha que cae en ese día del mes. RNF07_ nunca se guarda el número de tarjeta.
+      // La primera vez, el trigger trg_perfil_completo marca usuario.perfil_completo = true (RF04).
       await cliente.query(
         `INSERT INTO configuracion_financiera
-           (usuario_id, ingreso_principal, ingresos_secundarios, dias_de_ingreso,
-            metodos_de_pago, dia_de_corte, fecha_limite_de_pago, gastos_fijos)
+                (usuario_id, ingreso_principal, ingresos_secundarios, dias_de_ingreso,
+                 metodos_de_pago, dia_de_corte, fecha_limite_de_pago, gastos_fijos)
          VALUES ($1::bigint, $2::numeric, $3::text, $4::smallint[],
                  $5::text[], $6::smallint,
                  CASE WHEN $7::int IS NULL THEN NULL ELSE fn_proxima_fecha($7::int) END,
-                 $8::jsonb)`,
+                 $8::jsonb)
+         ON CONFLICT (usuario_id) DO UPDATE
+            SET ingreso_principal = EXCLUDED.ingreso_principal,
+                ingresos_secundarios = EXCLUDED.ingresos_secundarios,
+                dias_de_ingreso = EXCLUDED.dias_de_ingreso,
+                metodos_de_pago = EXCLUDED.metodos_de_pago,
+                dia_de_corte = EXCLUDED.dia_de_corte,
+                fecha_limite_de_pago = EXCLUDED.fecha_limite_de_pago,
+                gastos_fijos = EXCLUDED.gastos_fijos`,
         [
           usuarioId,
           datos.ingreso_principal,
@@ -138,25 +150,22 @@ router.post('/completar', async (req: PeticionGastos, res: Response) => {
           JSON.stringify(datos.gastosFijos),
         ]
       );
-
-      await cliente.query('COMMIT');
-    }
+    });
   } catch (err: any) {
-    await cliente.query('ROLLBACK').catch(() => undefined);
     return responderError(res, err, 'guardar la configuración del usuario');
-  } finally {
-    cliente.release();
   }
 
-  if (yaCompleto) {
-    return res.status(409).json({ error: 'Tu perfil ya estaba completo.' });
-  }
-  return res.status(201).json({
+  return res.status(soloPrimeraVez ? 201 : 200).json({
     success: true,
-    message: 'Configuración guardada. ¡Tu perfil quedó completo!',
+    message: soloPrimeraVez ? 'Configuración guardada. ¡Tu perfil quedó completo!' : 'Configuración actualizada.',
     perfil_completo: true,
     recibe_sueldo: datos.recibe_sueldo,
   });
-});
+};
+
+router.post('/completar', (req: PeticionGastos, res: Response) => guardarConfiguracion(req, res, true));
+
+// RF034_ Los recordatorios, tarjetas y gastos fijos se pueden cambiar después del registro
+router.put('/', (req: PeticionGastos, res: Response) => guardarConfiguracion(req, res, false));
 
 export default router;
