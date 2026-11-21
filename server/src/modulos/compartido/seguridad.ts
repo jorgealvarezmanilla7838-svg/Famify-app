@@ -27,12 +27,28 @@ export const cabecerasSeguras = (_req: Request, res: Response, next: NextFunctio
   next();
 };
 
-// RNF02_ En producción solo se atiende por HTTPS
+// RNF02_ Toda conexión cifrada avisa al navegador (HSTS) que solo use HTTPS con este servidor.
+// En producción, o si TLS_OBLIGATORIO=true, se rechaza cualquier petición que no llegue por HTTPS.
 export const exigirHttps = (req: Request, res: Response, next: NextFunction) => {
-  if (process.env.NODE_ENV !== 'production') return next();
-  if (!req.secure) {
+  if (req.secure) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    return next();
+  }
+  if (process.env.NODE_ENV === 'production' || process.env.TLS_OBLIGATORIO === 'true') {
     return res.status(403).json({ error: 'La conexión debe realizarse mediante HTTPS.' });
   }
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   return next();
+};
+
+// RNF09_ Cada respuesta indica cuánto tardó el servidor (cabecera estándar Server-Timing),
+// así se puede comprobar el tiempo de respuesta desde el navegador o con curl -i.
+export const medirTiempo = (_req: Request, res: Response, next: NextFunction) => {
+  const inicio = process.hrtime.bigint();
+  const escribirCabeceras = res.writeHead;
+  res.writeHead = function (this: Response, ...args: any[]) {
+    const ms = Number(process.hrtime.bigint() - inicio) / 1e6;
+    if (!res.headersSent) res.setHeader('Server-Timing', `app;dur=${ms.toFixed(1)}`);
+    return (escribirCabeceras as any).apply(this, args);
+  } as typeof res.writeHead;
+  next();
 };

@@ -17,7 +17,9 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-export const urlCliente = () => (process.env.CLIENT_URL || 'http://localhost:5173').split(',')[0]!.trim();
+// RNF02_ Con certificado configurado, los enlaces de invitación apuntan a la versión https del cliente
+export const urlCliente = () =>
+  (process.env.CLIENT_URL || `${process.env.TLS_CERT ? 'https' : 'http'}://localhost:5173`).split(',')[0]!.trim();
 
 interface UsuarioPublico {
   id: number;
