@@ -9,7 +9,8 @@
     "tls:generar": "node scripts/generar-certificado.cjs",
     "prueba:rendimiento": "node scripts/prueba-rendimiento.cjs",
     "start": "node dist/index.js",
-    "db:aplicar": "node scripts/aplicar-esquema.cjs"
+    "db:aplicar": "node scripts/aplicar-esquema.cjs",
+    "test": "node --import tsx --import ./test/apoyo/entorno.ts --test \"test/**/*.test.ts\""
   },
   "keywords": [],
   "author": "",

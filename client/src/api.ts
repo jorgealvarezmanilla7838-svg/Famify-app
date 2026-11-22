@@ -1,6 +1,9 @@
 // Punto único de comunicación con el servidor.
-// RNF02_ En producción, VITE_API_URL debe apuntar a una dirección https.
-export const API_URL: string = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+// RNF02_ Si no se define VITE_API_URL, la API se pide al mismo servidor que entregó la página (rutas /api),
+// y Vite la reenvía al backend. Así el navegador solo usa un origen y un certificado, funciona igual
+// en localhost que desde otra computadora de la red, y el protocolo (https) es el mismo de la página.
+// En producción VITE_API_URL debe ser una dirección https.
+export const API_URL: string = import.meta.env.VITE_API_URL || '';
 
 export const EVENTO_SESION_EXPIRADA = 'famify:sesion-expirada';
 
