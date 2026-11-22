@@ -63,7 +63,7 @@ export const Panel: FC<Props> = ({ usuario, onCerrarSesion, onBaja }) => {
   useEffect(() => {
     void Promise.resolve().then(actualizarAcceso);
     void Promise.resolve().then(contarAvisos);
-    const temporizador = setInterval(() => void contarAvisos(), 60000);
+    const temporizador = setInterval(() => void contarAvisos(), 30000);
     return () => clearInterval(temporizador);
   }, [actualizarAcceso, contarAvisos]);
 
