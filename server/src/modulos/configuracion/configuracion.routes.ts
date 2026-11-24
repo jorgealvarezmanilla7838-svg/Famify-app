@@ -4,6 +4,7 @@ import { METODOS_PAGO, metodoPorCodigo, metodoPorId } from '../../catalogos';
 import { ErrorNegocio, responderError } from '../compartido/errores';
 import { type PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
 import { validarConfiguracion } from './configuracion.validaciones';
+import { registrarSueldoAutomatico } from '../ingresos/ingresos.automaticos';
 
 const router = Router();
 
@@ -153,6 +154,13 @@ const guardarConfiguracion = async (req: PeticionGastos, res: Response, soloPrim
     });
   } catch (err: any) {
     return responderError(res, err, 'guardar la configuración del usuario');
+  }
+
+// RF05_ El ingreso mensual configurado se registra como ingreso y el de este mes toma el monto nuevo
+  try {
+    await registrarSueldoAutomatico(usuarioId, true);
+  } catch (err: any) {
+    console.error('Error al registrar el ingreso automático:', err.message);
   }
 
   return res.status(soloPrimeraVez ? 201 : 200).json({

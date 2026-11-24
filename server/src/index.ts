@@ -23,6 +23,7 @@ import { iniciarNotificaciones } from './modulos/notificaciones/notificaciones.s
 import presupuestoRouter from './modulos/presupuesto/presupuesto.routes';
 import reportesRouter from './modulos/reportes/reportes.routes';
 import { iniciarRespaldos } from './modulos/respaldos/respaldos';
+import { iniciarIngresosAutomaticos } from './modulos/ingresos/ingresos.automaticos';
 
 secretoJwt();
 
@@ -91,6 +92,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 const alIniciar = (protocolo: string) => () => {
   console.log(`Servidor Famify iniciado en ${protocolo}://localhost:${PORT}`);
   iniciarNotificaciones();
+  iniciarIngresosAutomaticos();
   iniciarRespaldos();
 };
 
