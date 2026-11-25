@@ -6,6 +6,7 @@ import { PERMISOS_EDITABLES } from '../compartido/permisos';
 import { ROL_ADMIN, ROL_INTEGRANTE, rolIntegranteDeFamilia } from '../compartido/roles';
 import { type PeticionGastos, cargarContexto } from '../gastos/gastos.permisos';
 import { leerId } from '../gastos/gastos.validaciones';
+import { quitarIngresosAutomaticosDelMes } from '../ingresos/ingresos.automaticos';
 
 const router = Router();
 router.use(cargarContexto);
@@ -126,6 +127,7 @@ router.delete('/integrantes/:id', soloAdmin, async (req: PeticionGastos, res: Re
         throw new ErrorNegocio(404, 'El integrante no pertenece a tu familia.');
       }
       await cliente.query('SELECT fn_eliminar_integrante($1::bigint, $2::bigint)', [usuarioId, id]);
+      await quitarIngresosAutomaticosDelMes(cliente, id);
     });
     return res.json({ success: true, message: 'Integrante eliminado y sus datos personales borrados.' });
   } catch (err: any) {
@@ -150,6 +152,7 @@ router.delete('/cuenta', async (req: PeticionGastos, res: Response) => {
         throw new ErrorNegocio(400, 'Eres el único administrador de la familia. Antes de darte de baja, nombra a otro administrador.');
       }
       await cliente.query('SELECT fn_dar_de_baja($1::bigint)', [usuarioId]);
+      await quitarIngresosAutomaticosDelMes(cliente, usuarioId);
     });
     return res.json({ success: true, message: 'Tu cuenta fue eliminada.' });
   } catch (err: any) {

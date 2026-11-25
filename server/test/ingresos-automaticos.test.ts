@@ -2,9 +2,11 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { bd } from './apoyo/bd-falsa';
+import { pool } from '../src/db';
 import {
   FUENTE_SUELDO_AUTOMATICO,
   calcularIngresosDelMes,
+  quitarIngresosAutomaticosDelMes,
   registrarSueldoAutomatico,
 } from '../src/modulos/ingresos/ingresos.automaticos';
 
@@ -65,5 +67,16 @@ describe('Registro automático del ingreso (RF09)', () => {
     const consulta = bd.buscar('FROM usuario u')[0]!.sql;
     assert.match(consulta, /u\.recibe_sueldo/);
     assert.match(consulta, /fn_tiene_permiso\(u\.id, 'ingresos\.registrar'\)/);
+  });
+});
+
+describe('Baja de un usuario (RNF32)', () => {
+  it('borra solo sus ingresos automáticos del mes actual en adelante', async () => {
+    bd.cuando('DELETE FROM ingresos', { rowCount: 1 });
+    await quitarIngresosAutomaticosDelMes(pool, 55);
+    const borrado = bd.buscar('DELETE FROM ingresos')[0]!;
+    assert.deepEqual(borrado.params.slice(0, 2), [55, FUENTE_SUELDO_AUTOMATICO]);
+    assert.match(borrado.sql, /fuente = \$2::varchar/);
+    assert.match(borrado.sql, /fecha >= date_trunc\('month'/);
   });
 });
