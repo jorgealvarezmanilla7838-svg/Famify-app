@@ -347,9 +347,20 @@ describe('Administración familiar (RF037–RF040, RNF32)', () => {
   it('RF040 / RNF32: eliminar un integrante usa fn_eliminar_integrante (anonimiza sus datos)', async () => {
     bd.cuando('FOR UPDATE', { rows: [{ id: 1, rol_id: 1 }, { id: 2, rol_id: 2 }] });
     bd.cuando('fn_eliminar_integrante', { rows: [{}] });
+    bd.cuando('DELETE FROM ingresos', { rowCount: 1 });
     const r = await s.pedir('DELETE', '/api/administracion/integrantes/2');
     assert.equal(r.estado, 200);
     assert.deepEqual(bd.buscar('fn_eliminar_integrante')[0]!.params, [1, 2]);
+    // RNF32_ también se quita el ingreso automático de este mes del integrante eliminado
+    assert.equal(bd.buscar('DELETE FROM ingresos')[0]!.params[0], 2);
+  });
+  it('RNF32: al darse de baja se quita el ingreso automático de este mes', async () => {
+    bd.cuando('FOR UPDATE', { rows: [{ id: 1, rol_id: 1 }, { id: 2, rol_id: 1 }] });
+    bd.cuando('fn_dar_de_baja', { rows: [{}] });
+    bd.cuando('DELETE FROM ingresos', { rowCount: 1 });
+    const r = await s.pedir('DELETE', '/api/administracion/cuenta', { confirmacion: 'ELIMINAR' });
+    assert.equal(r.estado, 200);
+    assert.equal(bd.buscar('DELETE FROM ingresos')[0]!.params[0], 1);
   });
   it('RNF32: darse de baja exige escribir ELIMINAR y no deja a la familia sin administrador', async () => {
     assert.equal((await s.pedir('DELETE', '/api/administracion/cuenta', { confirmacion: 'si' })).estado, 400);

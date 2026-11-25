@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { pool } from '../../db';
 
 // RF05_ y RF09_ El ingreso mensual de "Mi configuración" se registra solo como ingreso en cada día de ingreso del mes.
@@ -85,6 +86,17 @@ const sincronizar = async (usuarioId: number | null, actualizarMontos: boolean) 
       revisados.add(clave);
     }
   }
+};
+
+// RNF32_ Al dar de baja a un usuario se quita su ingreso automático de este mes, porque sale de la familia y su
+// configuración se borra. Los de meses anteriores y los registrados a mano se conservan para no alterar la contabilidad.
+export const quitarIngresosAutomaticosDelMes = async (cliente: Pick<PoolClient, 'query'>, usuarioId: number) => {
+  await cliente.query(
+    `DELETE FROM ingresos
+      WHERE usuario_id = $1::bigint AND fuente = $2::varchar
+        AND fecha >= date_trunc('month', now() AT TIME ZONE $3::text)::date`,
+    [usuarioId, FUENTE_SUELDO_AUTOMATICO, ZONA_HORARIA]
+  );
 };
 
 // Las ejecuciones se hacen una tras otra para no crear el mismo ingreso dos veces
